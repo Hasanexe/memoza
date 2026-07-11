@@ -1,0 +1,17 @@
+{
+	"name": "memoza-web",
+	"compatibility_date": "2026-06-11",
+	"workers_dev": false,
+	"observability": {
+		"enabled": true
+	},
+	"routes": [
+		{
+			"pattern": "app.memoza.io",
+			"custom_domain": true
+		}
+	],
+	"assets": {
+		"directory": "./dist"
+	}
+}

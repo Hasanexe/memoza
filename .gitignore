@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Cloudflare / Wrangler
+.wrangler/
+wrangler.lock
+
+# TypeScript
+*.tsbuildinfo
+
+# Secrets
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Local config
+*.local
+
+# Archive folders
+archive/
+
+# Big
+*.exe
+
+# Documentations
+*.txt
+*.md
+!docs/**/*.md
+scripts/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# IDE
+.vscode/
+.idea/

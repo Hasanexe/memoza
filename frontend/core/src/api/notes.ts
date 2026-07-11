@@ -1,0 +1,118 @@
+import { request } from './client';
+
+export interface NoteRow {
+  id: string;
+  owner_id: string;
+  title_ct: string;
+  tags_ct: string | null;
+  wrapped_cek: string;
+  wrap_method: 'dek' | 'pubkey';
+  pinned: 0 | 1;
+  rev: number;
+  created_at: number;
+  updated_at: number;
+  deleted_at: number | null;
+}
+
+export interface FullNote extends NoteRow {
+  body_ct: string;
+}
+
+export interface ListResponse {
+  notes: NoteRow[];
+  tombstones: string[];
+  revoked: string[];
+  next: string | null;
+}
+
+export function listNotes(since?: string, limit?: number): Promise<ListResponse> {
+  const params = new URLSearchParams();
+  if (since) params.set('since', since);
+  if (limit) params.set('limit', String(limit));
+  const qs = params.toString();
+  return request(`/notes${qs ? `?${qs}` : ''}`, { method: 'GET' });
+}
+
+export function getNote(id: string): Promise<FullNote> {
+  return request(`/notes/${id}`, { method: 'GET' });
+}
+
+export interface CreateNoteRequest {
+  title_ct: string;
+  body_ct: string;
+  tags_ct: string | null;
+  wrapped_cek: string;
+}
+
+export interface CreateNoteResponse {
+  id: string;
+  rev: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export function createNote(id: string, body: CreateNoteRequest): Promise<CreateNoteResponse> {
+  return request(`/notes/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+export interface UpdateNoteRequest {
+  title_ct: string;
+  body_ct: string;
+  tags_ct: string | null;
+  base_rev: number;
+}
+
+export interface UpdateNoteResponse {
+  rev: number;
+  updated_at: number;
+}
+
+export function updateNote(id: string, body: UpdateNoteRequest): Promise<UpdateNoteResponse> {
+  return request(`/notes/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+export function trashNote(id: string): Promise<{ ok: true }> {
+  return request(`/notes/${id}`, { method: 'DELETE' });
+}
+
+export function restoreNote(id: string): Promise<{ ok: true }> {
+  return request(`/notes/${id}/restore`, { method: 'POST' });
+}
+
+export function purgeNote(id: string): Promise<{ ok: true }> {
+  return request(`/notes/${id}/purge`, { method: 'DELETE' });
+}
+
+export function setPinned(id: string, pinned: 0 | 1): Promise<{ updated_at: number }> {
+  return request(`/notes/${id}/grant`, { method: 'PATCH', body: JSON.stringify({ pinned }) });
+}
+
+export function shareNote(id: string, recipientId: string, wrappedCek: string): Promise<{ ok: true }> {
+  return request(`/notes/${id}/share`, {
+    method: 'POST',
+    body: JSON.stringify({ recipient_id: recipientId, wrapped_cek: wrappedCek }),
+  });
+}
+
+export function unshareNote(id: string, userId: string): Promise<{ ok: true }> {
+  return request(`/notes/${id}/share/${userId}`, { method: 'DELETE' });
+}
+
+export interface CommentRow {
+  id: string;
+  author_id: string;
+  body_ct: string;
+  created_at: number;
+}
+
+export function listComments(noteId: string): Promise<{ comments: CommentRow[] }> {
+  return request(`/notes/${noteId}/comments`, { method: 'GET' });
+}
+
+export function postComment(noteId: string, id: string, bodyCt: string): Promise<CommentRow> {
+  return request(`/notes/${noteId}/comments`, { method: 'POST', body: JSON.stringify({ id, body_ct: bodyCt }) });
+}
+
+export function deleteComment(noteId: string, commentId: string): Promise<{ ok: true }> {
+  return request(`/notes/${noteId}/comments/${commentId}`, { method: 'DELETE' });
+}

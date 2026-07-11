@@ -1,0 +1,21 @@
+[package]
+name = "memoza-desktop"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "memoza_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-updater = "2"
+keyring = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

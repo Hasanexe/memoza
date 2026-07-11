@@ -1,0 +1,87 @@
+# Client State — desktop shell (SQLite)
+
+Local, per-device SQLite database (`memoza.db`, via `tauri-plugin-sql`).
+Mirrors the server shape — **ciphertext and wrapped keys only**, same trust
+boundary as D1. Envelope/format definitions: the canonical crypto spec
+(`docs/architecture/README.md`). Shared in-memory session fields (unwrapped
+`dek`/`privateKey`, access token): `docs/architecture/frontend-core/table.md`
+— unchanged on desktop.
+
+## `local_note`
+
+Local cache of every synced note (not just opened ones — full-body search
+needs the body available offline). One row per note the user can currently
+see.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PK | Same id as the server's `note.id` |
+| `owner_id` | TEXT | |
+| `title_ct`, `body_ct`, `tags_ct` | TEXT | Same ciphertext as the server; `tags_ct` nullable |
+| `wrapped_cek` | TEXT | This user's grant |
+| `wrap_method` | TEXT | `dek` / `pubkey` |
+| `pinned` | INTEGER | This user's pin |
+| `rev` | INTEGER | Used to skip re-fetching the body when only the grant changed (e.g. a pin) |
+| `created_at`, `updated_at`, `deleted_at` | INTEGER | Mirrors the server row |
+
+## `local_comment`
+
+Cached comment ciphertext per note, refreshed opportunistically (best-effort
+network fetch on `listComments`, falling back to whatever's cached when
+offline).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PK | |
+| `note_id` | TEXT | |
+| `author_id` | TEXT | |
+| `body_ct` | TEXT | |
+| `created_at` | INTEGER | |
+
+## `sync_state`
+
+Single row holding the persisted keyset cursor (unlike the web shell, where
+the cursor lives only in memory for the session).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | Always `1` |
+| `cursor` | TEXT | Opaque `next` cursor from the last `GET /notes` page; `NULL` = full resync next time |
+
+## `write_queue`
+
+Durable queue of mutations pending sync, drained FIFO. Draining stops after
+the first failure and resumes on the next trigger (enqueue, `online`,
+`visibilitychange`) — there is no timed retry/backoff schedule. Survives app
+restarts and offline periods.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PK | Queue entry id (not a note/comment id) |
+| `kind` | TEXT | `create` / `update` / `pin` / `trash` / `restore` / `purge` / `share` / `unshare` / `comment` / `deleteComment` |
+| `note_id` | TEXT | Nullable (present for all current kinds) |
+| `payload_json` | TEXT | The operation's ciphertext/args — never plaintext |
+| `created_at` | INTEGER | FIFO order |
+| `attempts` | INTEGER | Incremented on failure; draining stops after any failure (retried next drain) |
+| `last_error` | TEXT | Last failure message, for diagnostics only — never logs secrets |
+
+## `local_account`
+
+Single row: the current user's cached envelope, enabling offline biometric
+unlock (no network call needed to re-fetch `wrapped_dek`/`wrapped_private_key`
+on a fresh launch).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | Always `1` |
+| `user_id`, `email` | TEXT | |
+| `wrapped_dek`, `wrapped_private_key` | TEXT | Ciphertext, opaque — **not** key material |
+| `biometric_enabled` | INTEGER | Whether `enableBiometricUnlock` has sealed a wrap-key secret in the OS keystore |
+
+## OS keystore (outside SQLite)
+
+One secret, sealed via the `keyring` crate (Windows Credential Manager /
+macOS Keychain / Linux Secret Service), service `io.memoza.desktop`, account
+`wrapkey`: the raw `wrapKey` bytes (HKDF output, base64). Never in SQLite,
+never logged. Cleared on logout (`clearLocalAccount`) or when biometric
+unlock is disabled.

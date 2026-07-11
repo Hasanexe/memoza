@@ -1,0 +1,9 @@
+{
+  "name": "gateway-worker",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@memoza/shared": "*",
+    "jose": "^5.2.4"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@memoza/core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*.css": "./src/*.css",
+    "./*": "./src/*.ts"
+  },
+  "devDependencies": {
+    "vite": "^8.1.4"
+  }
+}

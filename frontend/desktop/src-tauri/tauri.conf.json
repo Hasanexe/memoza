@@ -1,0 +1,49 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "Memoza",
+	"version": "1.0.0",
+	"identifier": "io.memoza.desktop",
+	"build": {
+		"beforeDevCommand": "npm run dev",
+		"beforeBuildCommand": "npm run build",
+		"devUrl": "http://localhost:1420",
+		"frontendDist": "../dist"
+	},
+	"app": {
+		"windows": [
+			{
+				"label": "main",
+				"title": "Memoza",
+				"width": 1100,
+				"height": 750,
+				"minWidth": 480,
+				"minHeight": 400
+			}
+		],
+		"security": {
+			"csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.memoza.io; object-src 'none'; base-uri 'none'"
+		}
+	},
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		]
+	},
+	"plugins": {
+		"deep-link": {
+			"desktop": {
+				"schemes": ["memoza"]
+			}
+		},
+		"updater": {
+			"active": false,
+			"endpoints": [],
+			"pubkey": ""
+		}
+	}
+}

@@ -1,0 +1,13 @@
+{
+  "name": "memoza-auth-gateway",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "auth-worker",
+    "gateway-worker"
+  ],
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "typescript": "^5.7.2"
+  }
+}

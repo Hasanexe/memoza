@@ -1,0 +1,38 @@
+{
+	"name": "memoza-auth",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-11",
+	"workers_dev": false,
+	"observability": {
+		"enabled": true
+	},
+	"routes": [
+		{
+			"pattern": "api.memoza.io/auth/*",
+			"zone_name": "memoza.io"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "memoza_auth",
+			"database_id": "cd3cbc21-1cec-4de5-a73b-649aee64cb65"
+		}
+	],
+	"services": [
+		{
+			"binding": "NOTES",
+			"service": "memoza-notes"
+		}
+	],
+	"vars": {
+		"FRONTEND_ORIGIN": "https://app.memoza.io",
+		"RESEND_FROM": "no-reply@email.memoza.io",
+		"PBKDF2_ITERATIONS": "100000",
+		"REFRESH_TOKEN_TTL_MS": "604800000",
+		"REFRESH_TOKEN_MAX_AGE_S": "604800",
+		"REFRESH_GRACE_MS": "10000",
+		"RESET_TOKEN_TTL_MS": "1800000",
+		"MAX_REFRESH_TOKENS_PER_USER": "10"
+	}
+}

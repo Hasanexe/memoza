@@ -1,0 +1,26 @@
+{
+	"name": "memoza-notes",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-11",
+	"workers_dev": false,
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "memoza_notes",
+			"database_id": "d49720f5-5be1-4d9c-8b40-9bbaf6cc0600"
+		}
+	],
+	"vars": {
+		"MAX_TITLE_CT_BYTES": "2048",
+		"MAX_BODY_CT_BYTES": "512000",
+		"MAX_TAGS_CT_BYTES": "2048",
+		"MAX_COMMENT_CT_BYTES": "8192",
+		"MAX_SYNC_LIMIT": "200",
+		"TRASH_RETENTION_DAYS": "30",
+		"TOMBSTONE_RETENTION_DAYS": "90",
+		"PURGE_SWEEP_INTERVAL_MS": "3600000"
+	}
+}

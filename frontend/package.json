@@ -1,0 +1,12 @@
+{
+  "name": "memoza-frontend",
+  "private": true,
+  "workspaces": [
+    "core",
+    "web",
+    "desktop"
+  ],
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

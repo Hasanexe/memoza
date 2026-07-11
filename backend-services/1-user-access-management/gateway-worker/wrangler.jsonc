@@ -1,0 +1,28 @@
+{
+  "name": "memoza-gateway",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-11",
+  "workers_dev": false,
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "pattern": "api.memoza.io/*",
+      "zone_name": "memoza.io"
+    }
+  ],
+  "services": [
+    {
+      "binding": "NOTES",
+      "service": "memoza-notes"
+    },
+    {
+      "binding": "AUTH",
+      "service": "memoza-auth"
+    }
+  ],
+  "vars": {
+    "FRONTEND_ORIGIN": "https://app.memoza.io"
+  }
+}

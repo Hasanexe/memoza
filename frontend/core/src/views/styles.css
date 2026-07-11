@@ -1,0 +1,296 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #666666;
+  --border: #dddddd;
+  --accent: #2f6feb;
+  --danger: #c0392b;
+  --surface: #f6f6f7;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --fg: #eaeaea;
+    --muted: #9a9a9a;
+    --border: #33363c;
+    --accent: #6ea8fe;
+    --danger: #ff7a6e;
+    --surface: #1c1e23;
+  }
+}
+
+:root[data-theme='light'] {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #666666;
+  --border: #dddddd;
+  --accent: #2f6feb;
+  --danger: #c0392b;
+  --surface: #f6f6f7;
+}
+
+:root[data-theme='dark'] {
+  --bg: #14161a;
+  --fg: #eaeaea;
+  --muted: #9a9a9a;
+  --border: #33363c;
+  --accent: #6ea8fe;
+  --danger: #ff7a6e;
+  --surface: #1c1e23;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+#app {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.hidden {
+  display: none !important;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  width: 100%;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+label input,
+label textarea,
+label select {
+  margin-top: 0.25rem;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 0.5rem 0.9rem;
+  margin: 0.15rem;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.banner {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  margin: 0.5rem 0;
+}
+
+.banner-error {
+  background: color-mix(in srgb, var(--danger) 15%, var(--bg));
+  color: var(--danger);
+}
+
+.banner-info {
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg));
+  color: var(--accent);
+}
+
+.auth-view {
+  max-width: 420px;
+  margin: 3rem auto;
+}
+
+.recovery-key {
+  font-size: 1.1rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-align: center;
+  user-select: all;
+}
+
+.list-view header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.list-view header h1 {
+  font-size: 1.3rem;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.list-view header span {
+  color: var(--muted);
+  flex: 1 1 auto;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0.75rem 0;
+}
+
+.tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.chip {
+  border-radius: 999px;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.7rem;
+}
+
+.chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.note-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.6rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.note-row:hover {
+  background: var(--surface);
+}
+
+.note-title {
+  flex: 1 1 auto;
+  font-weight: 500;
+}
+
+.note-tags {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.editor-view input,
+.editor-view .editor-body {
+  margin-bottom: 0.75rem;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0.75rem 0;
+}
+
+.save-status {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.editor-body {
+  width: 100%;
+  min-height: 40vh;
+  resize: vertical;
+  font-family: ui-monospace, monospace;
+}
+
+.preview {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  min-height: 40vh;
+}
+
+.readonly-notice {
+  color: var(--muted);
+}
+
+.comments h2 {
+  font-size: 1rem;
+}
+
+.comment {
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0;
+}
+
+.comment-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dialog {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  width: min(420px, 90vw);
+}
+
+.settings-view section {
+  margin: 1.5rem 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.danger-zone p {
+  color: var(--danger);
+}
