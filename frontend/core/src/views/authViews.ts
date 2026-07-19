@@ -1,4 +1,4 @@
-import { h, clear, errorBanner } from './dom';
+import { h, clear, errorBanner, infoBanner, brand } from './dom';
 import type { AppContext } from './app';
 import * as authApi from '../api/auth';
 import type { ResetProbeResponse } from '../api/auth';
@@ -16,8 +16,6 @@ import {
   unwrapPrivateKeyExtractable,
   deriveRecoveryDekWrapKey,
   deriveRecoveryPrivateKeyWrapKey,
-  sealDekForSession,
-  sealPrivateKeyForSession,
   deriveCredential,
   buildPasswordEnvelope,
 } from '../crypto/keys';
@@ -25,6 +23,8 @@ import { setSession, setAccessToken } from '../crypto/session';
 import { decodeAccessToken } from '../crypto/jwt';
 import { pemToDer, toBase64, fromUtf8 } from '../crypto/codec';
 import { ESCROW_PUBLIC_KEY_PEM, MIN_PASSWORD_LENGTH, KDF_ITERATIONS, EMAIL_STORAGE_KEY } from '../config';
+
+const USERNAME_RE = /^(?!-)[a-z0-9-]{3,32}(?<!-)$/;
 
 async function encryptRecoveryKeyForEscrow(recoveryKey: string): Promise<string> {
   const publicKey = await crypto.subtle.importKey(
@@ -43,7 +43,7 @@ async function unlockWithPassword(ctx: AppContext, email: string, password: stri
 
   const result = await authApi.login(email, authHash);
   setAccessToken(result.access_token);
-  localStorage.setItem(EMAIL_STORAGE_KEY, email);
+  if (ctx.rememberEmail !== false) localStorage.setItem(EMAIL_STORAGE_KEY, email);
 
   const dek = await unwrapDek(wrapKey, result.wrapped_dek);
   const privateKey = await unwrapPrivateKey(wrapKey, result.wrapped_private_key);
@@ -51,18 +51,51 @@ async function unlockWithPassword(ctx: AppContext, email: string, password: stri
   setSession({
     userId,
     email,
+    username: result.username,
     dek,
     privateKey,
     wrappedDek: result.wrapped_dek,
     wrappedPrivateKey: result.wrapped_private_key,
   });
-  await ctx.onUnlock?.({ userId, email, wrappedDek: result.wrapped_dek, wrappedPrivateKey: result.wrapped_private_key });
+  await ctx.onUnlock?.({
+    userId,
+    email,
+    username: result.username,
+    wrappedDek: result.wrapped_dek,
+    wrappedPrivateKey: result.wrapped_private_key,
+  });
 
   ctx.navigate('/');
 }
 
-function renderRecoveryKeyScreen(ctx: AppContext, recoveryKey: string): void {
+function renderCheckEmailScreen(ctx: AppContext): void {
   const { root, navigate } = ctx;
+  clear(root);
+  root.append(
+    h(
+      'div',
+      { class: 'auth-view' },
+      brand(),
+      h('h1', {}, 'Check your email'),
+      h(
+        'p',
+        {},
+        "We've sent an activation link to your email address. Open it to pick your username and finish setting up your account."
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          onclick: () => navigate('/login'),
+        },
+        'Go to login'
+      )
+    )
+  );
+}
+
+function renderRecoveryKeyScreen(ctx: AppContext, recoveryKey: string): void {
+  const { root } = ctx;
   clear(root);
 
   const ack = h('input', { type: 'checkbox' }) as HTMLInputElement;
@@ -70,7 +103,7 @@ function renderRecoveryKeyScreen(ctx: AppContext, recoveryKey: string): void {
   ack.addEventListener('change', () => {
     continueBtn.disabled = !ack.checked;
   });
-  continueBtn.addEventListener('click', () => navigate('/'));
+  continueBtn.addEventListener('click', () => renderCheckEmailScreen(ctx));
 
   const downloadBtn = h('button', { type: 'button' }, 'Download recovery key');
   downloadBtn.addEventListener('click', () => {
@@ -92,6 +125,7 @@ function renderRecoveryKeyScreen(ctx: AppContext, recoveryKey: string): void {
     h(
       'div',
       { class: 'auth-view' },
+      brand(),
       h('h1', {}, 'Save your recovery key'),
       h(
         'p',
@@ -152,6 +186,7 @@ export function renderRegister(ctx: AppContext): void {
     h(
       'div',
       { class: 'auth-view' },
+      brand(),
       h('h1', {}, 'Create your Memoza account'),
       form,
       h(
@@ -205,7 +240,7 @@ export function renderRegister(ctx: AppContext): void {
 
       const escrowedRecovery = mode === 'convenient' ? await encryptRecoveryKeyForEscrow(recoveryKey) : undefined;
 
-      const result = await authApi.register({
+      await authApi.register({
         email,
         name,
         password: envelope.authHash,
@@ -217,27 +252,6 @@ export function renderRegister(ctx: AppContext): void {
         wrapped_private_key_recovery: wrappedPrivateKeyRecovery,
         recovery_mode: mode,
         escrowed_recovery: escrowedRecovery,
-      });
-
-      setAccessToken(result.access_token);
-      localStorage.setItem(EMAIL_STORAGE_KEY, email);
-
-      const sessionDek = await sealDekForSession(dek);
-      const sessionPrivateKey = await sealPrivateKeyForSession(keypair.privateKey);
-      const { userId } = decodeAccessToken(result.access_token);
-      setSession({
-        userId,
-        email,
-        dek: sessionDek,
-        privateKey: sessionPrivateKey,
-        wrappedDek: envelope.wrappedDek,
-        wrappedPrivateKey: envelope.wrappedPrivateKey,
-      });
-      await ctx.onUnlock?.({
-        userId,
-        email,
-        wrappedDek: envelope.wrappedDek,
-        wrappedPrivateKey: envelope.wrappedPrivateKey,
       });
 
       renderRecoveryKeyScreen(ctx, recoveryKey);
@@ -279,6 +293,7 @@ export function renderLogin(ctx: AppContext): void {
     h(
       'div',
       { class: 'auth-view' },
+      brand(),
       h('h1', {}, 'Log in to Memoza'),
       form,
       h(
@@ -322,7 +337,11 @@ export function renderLogin(ctx: AppContext): void {
       await unlockWithPassword(ctx, emailInput.value.trim(), passwordInput.value);
     } catch (err) {
       submitBtn.disabled = false;
-      errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Login failed'));
+      if (err instanceof ApiError && err.status === 403) {
+        errorHost.append(errorBanner('Check your email to activate your account before logging in.'));
+      } else {
+        errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Login failed'));
+      }
     }
   }
 }
@@ -374,7 +393,7 @@ export async function renderLock(ctx: AppContext, email: string): Promise<void> 
     biometricHost.append(biometricBtn);
   }
 
-  root.append(h('div', { class: 'auth-view' }, h('h1', {}, 'Unlock Memoza'), biometricHost, form, logoutLink));
+  root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, 'Unlock Memoza'), biometricHost, form, logoutLink));
 
   async function submit(): Promise<void> {
     clear(errorHost);
@@ -413,6 +432,7 @@ export function renderResetRequest(ctx: AppContext): void {
     h(
       'div',
       { class: 'auth-view' },
+      brand(),
       h('h1', {}, 'Reset your password'),
       form,
       h(
@@ -443,6 +463,7 @@ export function renderResetRequest(ctx: AppContext): void {
         h(
           'div',
           { class: 'auth-view' },
+          brand(),
           h('h1', {}, 'Check your email'),
           h('p', {}, 'If an account exists for that address, a reset link is on its way.')
         )
@@ -516,7 +537,7 @@ export async function renderResetConfirm(ctx: AppContext, params: URLSearchParam
     submitBtn
   );
 
-  root.append(h('div', { class: 'auth-view' }, h('h1', {}, 'Choose a new password'), form));
+  root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, 'Choose a new password'), form));
 
   async function submit(): Promise<void> {
     clear(errorHost);
@@ -565,6 +586,7 @@ export async function renderResetConfirm(ctx: AppContext, params: URLSearchParam
         h(
           'div',
           { class: 'auth-view' },
+          brand(),
           h('h1', {}, 'Password reset'),
           h('p', {}, 'Your password has been reset. Log in with your new password.'),
           h(
@@ -582,6 +604,111 @@ export async function renderResetConfirm(ctx: AppContext, params: URLSearchParam
     } catch (err) {
       submitBtn.disabled = false;
       errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Reset failed'));
+    }
+  }
+}
+
+export async function renderActivate(ctx: AppContext, params: URLSearchParams): Promise<void> {
+  const { root, navigate } = ctx;
+  clear(root);
+
+  const token = params.get('token') ?? '';
+  if (!token) {
+    root.append(h('div', { class: 'auth-view' }, brand(), errorBanner('Invalid or expired activation link')));
+    return;
+  }
+
+  const usernameInput = h('input', {
+    type: 'text',
+    required: 'true',
+    autocomplete: 'off',
+    placeholder: 'yourname',
+  }) as HTMLInputElement;
+  const availabilityHost = h('div', {});
+  const errorHost = h('div', {});
+  const submitBtn = h('button', { type: 'submit' }, 'Activate account') as HTMLButtonElement;
+
+  let debounceTimer: number | undefined;
+
+  function setAvailability(node: HTMLElement | string | null): void {
+    clear(availabilityHost);
+    if (node) availabilityHost.append(typeof node === 'string' ? h('p', {}, node) : node);
+  }
+
+  usernameInput.addEventListener('input', () => {
+    const value = usernameInput.value.trim().toLowerCase();
+    if (debounceTimer) window.clearTimeout(debounceTimer);
+    if (!USERNAME_RE.test(value)) {
+      setAvailability(value ? '3–32 characters: a–z, 0–9, hyphen (no leading/trailing hyphen)' : null);
+      return;
+    }
+    setAvailability('Checking…');
+    debounceTimer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await authApi.checkUsernameAvailable(token, value);
+          if (usernameInput.value.trim().toLowerCase() !== value) return;
+          setAvailability(res.available ? infoBanner('Available') : errorBanner('Not available'));
+        } catch {
+          setAvailability('Could not check availability');
+        }
+      })();
+    }, 400);
+  });
+
+  const form = h(
+    'form',
+    {
+      onsubmit: (e: Event) => {
+        e.preventDefault();
+        void submit();
+      },
+    },
+    h('label', {}, 'Choose a username', usernameInput),
+    availabilityHost,
+    errorHost,
+    submitBtn
+  );
+
+  root.append(
+    h(
+      'div',
+      { class: 'auth-view' },
+      brand(),
+      h('h1', {}, 'Activate your account'),
+      h('p', {}, 'This is your permanent public handle for page links. It cannot be changed later.'),
+      form
+    )
+  );
+
+  async function submit(): Promise<void> {
+    clear(errorHost);
+    const username = usernameInput.value.trim().toLowerCase();
+    if (!USERNAME_RE.test(username)) {
+      errorHost.append(errorBanner('Enter a valid username'));
+      return;
+    }
+    submitBtn.disabled = true;
+    try {
+      await authApi.activate(token, username);
+      clear(root);
+      root.append(
+        h(
+          'div',
+          { class: 'auth-view' },
+          brand(),
+          h('h1', {}, 'Account activated'),
+          h('p', {}, 'You can now log in.'),
+          h('button', { type: 'button', onclick: () => navigate('/login') }, 'Go to login')
+        )
+      );
+    } catch (err) {
+      submitBtn.disabled = false;
+      if (err instanceof ApiError && err.status === 409) {
+        errorHost.append(errorBanner('That username is not available. Try another.'));
+      } else {
+        errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Activation failed. Re-register to get a fresh link.'));
+      }
     }
   }
 }

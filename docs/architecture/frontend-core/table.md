@@ -21,6 +21,7 @@ no key material are ever persisted by `core`.
 |---|---|---|
 | `userId` | `string` | Read from the access token's own `user_id` claim (`crypto/jwt.ts`), not verified client-side — the server already verified it |
 | `email` | `string` | Cached for KDF salt derivation on subsequent operations (password change, etc.) |
+| `username` | `string` | The account's permanent public handle (set at activation), returned by `POST /auth/login`; used to build a published page's shareable link (`views/shareView.ts`'s `publicPageUrl`) |
 | `dek` | `CryptoKey` (AES-GCM, non-extractable) | Unwraps owner-side note `cek`s |
 | `privateKey` | `CryptoKey` (RSA-OAEP-3072, non-extractable) | Unwraps share-side note `cek`s |
 | `wrappedDek` | `string` (base64 ciphertext) | The *current* `wrapped_dek` from the server, cached so password-change can re-unwrap a transient extractable copy without a network round trip. Opaque ciphertext, not key material |

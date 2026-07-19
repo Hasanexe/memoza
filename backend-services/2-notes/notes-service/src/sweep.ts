@@ -15,19 +15,25 @@ export async function runGuardedSweep(env: NotesEnv): Promise<void> {
   const trashCutoff = now - parseInt(env.TRASH_RETENTION_DAYS, 10) * 86400000;
   const tombstoneCutoff = now - parseInt(env.TOMBSTONE_RETENTION_DAYS, 10) * 86400000;
 
-  await env.DB.prepare(
+  const purged = await env.DB.prepare(
     `UPDATE note SET title_ct = '', body_ct = '', tags_ct = NULL, purged_at = ?, updated_at = ?
-     WHERE id IN (SELECT id FROM note WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purged_at IS NULL LIMIT ?)`
+     WHERE id IN (SELECT id FROM note WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purged_at IS NULL LIMIT ?)
+     RETURNING id`
   )
     .bind(now, now, trashCutoff, SWEEP_CHUNK_SIZE)
-    .run();
+    .all<{ id: string }>();
 
-  await env.DB.prepare(
-    `UPDATE note_grant SET wrapped_cek = '', updated_at = ?
-     WHERE note_id IN (SELECT id FROM note WHERE purged_at = ? LIMIT ?)`
-  )
-    .bind(now, now, SWEEP_CHUNK_SIZE)
-    .run();
+  const purgedIds = purged.results.map(r => r.id);
+  if (purgedIds.length > 0) {
+    const placeholders = purgedIds.map(() => '?').join(', ');
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE note_grant SET wrapped_cek = '', updated_at = ? WHERE note_id IN (${placeholders})`).bind(
+        now,
+        ...purgedIds
+      ),
+      env.DB.prepare(`DELETE FROM public_page WHERE note_id IN (${placeholders})`).bind(...purgedIds),
+    ]);
+  }
 
   await env.DB.prepare(
     `DELETE FROM note_comment WHERE note_id IN
@@ -52,5 +58,12 @@ export async function runGuardedSweep(env: NotesEnv): Promise<void> {
 
   await env.DB.prepare('DELETE FROM note WHERE id IN (SELECT id FROM note WHERE purged_at IS NOT NULL AND purged_at < ? LIMIT ?)')
     .bind(tombstoneCutoff, SWEEP_CHUNK_SIZE)
+    .run();
+
+  await env.DB.prepare(
+    `DELETE FROM public_page WHERE note_id IN
+     (SELECT p.note_id FROM public_page p LEFT JOIN note n ON n.id = p.note_id WHERE n.id IS NULL LIMIT ?)`
+  )
+    .bind(SWEEP_CHUNK_SIZE)
     .run();
 }

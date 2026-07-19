@@ -1,27 +1,28 @@
 CREATE TABLE note (
-  id         TEXT PRIMARY KEY,
-  owner_id   TEXT NOT NULL,
-  title_ct   TEXT NOT NULL,
-  body_ct    TEXT NOT NULL,
-  tags_ct    TEXT,
-  rev        INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  deleted_at INTEGER,
-  purged_at  INTEGER
+  id             TEXT PRIMARY KEY,
+  owner_id       TEXT NOT NULL,
+  title_ct       TEXT NOT NULL,
+  body_ct        TEXT NOT NULL,
+  tags_ct        TEXT,
+  rev            INTEGER NOT NULL DEFAULT 1,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  deleted_at     INTEGER,
+  purged_at      INTEGER,
+  last_comment_at INTEGER
 );
 
 CREATE INDEX idx_note_owner ON note(owner_id);
 CREATE INDEX idx_note_updated ON note(updated_at);
 
 CREATE TABLE note_grant (
-  note_id     TEXT NOT NULL REFERENCES note(id),
-  user_id     TEXT NOT NULL,
-  wrapped_cek TEXT NOT NULL,
-  wrap_method TEXT NOT NULL,
-  pinned      INTEGER NOT NULL DEFAULT 0,
-  updated_at  INTEGER NOT NULL,
-  revoked_at  INTEGER,
+  note_id        TEXT NOT NULL REFERENCES note(id),
+  user_id        TEXT NOT NULL,
+  wrapped_cek    TEXT NOT NULL,
+  wrap_method    TEXT NOT NULL,
+  last_viewed_at INTEGER NOT NULL DEFAULT 0,
+  updated_at     INTEGER NOT NULL,
+  revoked_at     INTEGER,
   PRIMARY KEY (note_id, user_id)
 );
 

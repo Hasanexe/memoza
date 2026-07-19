@@ -27,12 +27,15 @@
 	],
 	"vars": {
 		"FRONTEND_ORIGIN": "https://app.memoza.io",
+		"CORS_ALLOWED_ORIGINS": "https://app.memoza.io,tauri://localhost,http://tauri.localhost",
 		"RESEND_FROM": "no-reply@email.memoza.io",
 		"PBKDF2_ITERATIONS": "100000",
 		"REFRESH_TOKEN_TTL_MS": "604800000",
 		"REFRESH_TOKEN_MAX_AGE_S": "604800",
 		"REFRESH_GRACE_MS": "10000",
 		"RESET_TOKEN_TTL_MS": "1800000",
-		"MAX_REFRESH_TOKENS_PER_USER": "10"
+		"MAX_REFRESH_TOKENS_PER_USER": "10",
+		"ACTIVATION_TOKEN_TTL_MS": "86400000",
+		"UNACTIVATED_RETENTION_MS": "604800000"
 	}
 }

@@ -7,8 +7,8 @@ import {
   validateRecoveryMode,
 } from '../validation';
 import { hash } from '../password';
-import { issueTokens } from '../tokens';
-import { sendWelcome } from '../email';
+import { toBase64Url, hashRefreshToken } from '../tokens';
+import { sendActivation, sendAlreadyRegistered } from '../email';
 import { json } from '../types';
 import type { AuthEnv } from '../types';
 
@@ -74,61 +74,70 @@ export async function handleRegister(
     return json({ error: 'escrowed_recovery is not allowed in private mode' }, 400);
   }
 
-  const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ?')
-    .bind(email.toLowerCase())
-    .first();
-  if (existing) {
-    return json({ error: 'Email already registered' }, 409);
-  }
+  const normalizedEmail = email.toLowerCase();
+
+  await env.DB.prepare('DELETE FROM users WHERE active = 0 AND created_at < ?')
+    .bind(Date.now() - parseInt(env.UNACTIVATED_RETENTION_MS, 10))
+    .run();
 
   const passwordHash = await hash(password, parseInt(env.PBKDF2_ITERATIONS, 10));
-  const id = crypto.randomUUID();
+  const newId = crypto.randomUUID();
   const createdAt = Date.now();
 
-  try {
-    await env.DB.prepare(
-      `INSERT INTO users (
-         id, email, name, password_hash, role, created_at,
-         kdf_iterations, public_key, wrapped_dek, wrapped_private_key,
-         wrapped_dek_recovery, wrapped_private_key_recovery, recovery_mode, escrowed_recovery
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  const row = await env.DB.prepare(
+    `INSERT INTO users (
+       id, email, name, password_hash, role, created_at, active,
+       kdf_iterations, public_key, wrapped_dek, wrapped_private_key,
+       wrapped_dek_recovery, wrapped_private_key_recovery, recovery_mode, escrowed_recovery
+     ) VALUES (?, ?, ?, ?, 'Editor', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(email) DO UPDATE SET
+       name = excluded.name,
+       password_hash = excluded.password_hash,
+       kdf_iterations = excluded.kdf_iterations,
+       public_key = excluded.public_key,
+       wrapped_dek = excluded.wrapped_dek,
+       wrapped_private_key = excluded.wrapped_private_key,
+       wrapped_dek_recovery = excluded.wrapped_dek_recovery,
+       wrapped_private_key_recovery = excluded.wrapped_private_key_recovery,
+       recovery_mode = excluded.recovery_mode,
+       escrowed_recovery = excluded.escrowed_recovery
+     WHERE users.active = 0
+     RETURNING id`
+  )
+    .bind(
+      newId,
+      normalizedEmail,
+      name,
+      passwordHash,
+      createdAt,
+      kdf_iterations,
+      public_key,
+      wrapped_dek,
+      wrapped_private_key,
+      wrapped_dek_recovery,
+      wrapped_private_key_recovery,
+      recoveryMode,
+      recoveryMode === 'convenient' ? escrowed_recovery : null
     )
-      .bind(
-        id,
-        email.toLowerCase(),
-        name,
-        passwordHash,
-        'Editor',
-        createdAt,
-        kdf_iterations,
-        public_key,
-        wrapped_dek,
-        wrapped_private_key,
-        wrapped_dek_recovery,
-        wrapped_private_key_recovery,
-        recoveryMode,
-        recoveryMode === 'convenient' ? escrowed_recovery : null
-      )
-      .run();
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('UNIQUE')) {
-      return json({ error: 'Email already registered' }, 409);
-    }
-    throw err;
+    .first<{ id: string }>();
+
+  if (!row) {
+    ctx.waitUntil(sendAlreadyRegistered(env, normalizedEmail));
+    return json({ ok: true }, 202);
   }
 
-  ctx.waitUntil(sendWelcome(env, email, name));
+  const rawToken = toBase64Url(crypto.getRandomValues(new Uint8Array(32)).buffer);
+  const tokenHash = await hashRefreshToken(rawToken);
+  const expiresAt = Date.now() + parseInt(env.ACTIVATION_TOKEN_TTL_MS, 10);
 
-  const { accessToken, refreshCookie } = await issueTokens(env, { id, role: 'Editor' });
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM activation_token WHERE user_id = ?').bind(row.id),
+    env.DB.prepare(
+      'INSERT INTO activation_token (token_hash, user_id, expires_at) VALUES (?, ?, ?)'
+    ).bind(tokenHash, row.id, expiresAt),
+  ]);
 
-  return new Response(
-    JSON.stringify({ access_token: accessToken, token_type: 'Bearer' }),
-    {
-      status: 201,
-      headers: {
-        'Content-Type': 'application/json',
-        'Set-Cookie': refreshCookie,
-      },
-    }
-  );
+  ctx.waitUntil(sendActivation(env, normalizedEmail, name, rawToken));
+
+  return json({ ok: true }, 202);
 }

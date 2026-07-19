@@ -6,7 +6,7 @@ interface ListRow {
   note_id: string;
   wrapped_cek: string;
   wrap_method: string;
-  pinned: number;
+  has_unread_comment: number;
   grant_updated_at: number;
   revoked_at: number | null;
   owner_id: string;
@@ -16,6 +16,8 @@ interface ListRow {
   created_at: number;
   deleted_at: number | null;
   purged_at: number | null;
+  page_no: number | null;
+  is_public: number;
 }
 
 export async function handleList(
@@ -41,8 +43,10 @@ export async function handleList(
     await runGuardedSweep(env);
   }
 
-  const select = `SELECT g.note_id, g.wrapped_cek, g.wrap_method, g.pinned, g.updated_at AS grant_updated_at, g.revoked_at,
-                          n.owner_id, n.title_ct, n.tags_ct, n.rev, n.created_at, n.deleted_at, n.purged_at
+  const select = `SELECT g.note_id, g.wrapped_cek, g.wrap_method, g.updated_at AS grant_updated_at, g.revoked_at,
+                          (n.last_comment_at IS NOT NULL AND n.last_comment_at > g.last_viewed_at) AS has_unread_comment,
+                          n.owner_id, n.title_ct, n.tags_ct, n.rev, n.created_at, n.deleted_at, n.purged_at,
+                          n.page_no, n.is_public
                    FROM note_grant g JOIN note n ON n.id = g.note_id
                    WHERE g.user_id = ?`;
 
@@ -76,7 +80,9 @@ export async function handleList(
         tags_ct: r.tags_ct,
         wrapped_cek: r.wrapped_cek,
         wrap_method: r.wrap_method,
-        pinned: r.pinned,
+        has_unread_comment: r.has_unread_comment === 1,
+        page_no: r.owner_id === userId ? r.page_no : null,
+        is_public: r.is_public === 1,
         rev: r.rev,
         created_at: r.created_at,
         updated_at: r.grant_updated_at,

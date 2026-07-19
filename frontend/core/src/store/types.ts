@@ -4,7 +4,9 @@ export interface DecryptedNoteSummary {
   isOwner: boolean;
   title: string;
   tags: string[];
-  pinned: boolean;
+  hasUnreadComment: boolean;
+  pageNo: number | null;
+  isPublic: boolean;
   rev: number;
   createdAt: number;
   updatedAt: number;
@@ -27,12 +29,12 @@ export interface Store {
   listNotes(): Promise<DecryptedNoteSummary[]>;
   getNote(id: string): Promise<DecryptedNote | null>;
   saveNote(id: string | null, title: string, body: string, tags: string[]): Promise<DecryptedNote>;
-  setPinned(id: string, pinned: boolean): Promise<void>;
   trashNote(id: string): Promise<void>;
   restoreNote(id: string): Promise<void>;
   purgeNote(id: string): Promise<void>;
   shareNote(id: string, recipientEmail: string): Promise<void>;
   unshareNote(id: string, userId: string): Promise<void>;
+  publish(id: string): Promise<number>;
   listComments(noteId: string): Promise<DecryptedComment[]>;
   postComment(noteId: string, body: string): Promise<DecryptedComment>;
   deleteComment(noteId: string, commentId: string): Promise<void>;

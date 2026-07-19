@@ -22,19 +22,28 @@ export async function handleDeleteAccount(
     return json({ error: 'email and password are required' }, 400);
   }
 
-  const user = await env.DB.prepare('SELECT id, password_hash FROM users WHERE email = ?')
+  const user = await env.DB.prepare('SELECT id, password_hash, username FROM users WHERE email = ?')
     .bind(email.toLowerCase())
-    .first<{ id: string; password_hash: string }>();
+    .first<{ id: string; password_hash: string; username: string | null }>();
 
   if (!user) return json({ error: INVALID }, 401);
   const ok = await verify(password, user.password_hash);
   if (!ok) return json({ error: INVALID }, 401);
 
-  await env.DB.batch([
+  const statements = [
     env.DB.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').bind(user.id),
     env.DB.prepare('DELETE FROM reset_token WHERE user_id = ?').bind(user.id),
+    env.DB.prepare('DELETE FROM activation_token WHERE user_id = ?').bind(user.id),
     env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
-  ]);
+  ];
+  if (user.username !== null) {
+    statements.unshift(
+      env.DB.prepare(
+        "INSERT INTO retired_usernames (username, reason, retired_at) VALUES (?, 'deleted', ?)"
+      ).bind(user.username, Date.now())
+    );
+  }
+  await env.DB.batch(statements);
 
   ctx.waitUntil(
     env.NOTES.fetch('http://internal/notes/internal/purge-user', {

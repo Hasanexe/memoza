@@ -24,6 +24,6 @@ via the cookie and shows the lock screen for the password.
 | `dek` | Non-extractable AES-GCM `CryptoKey` (unwrap/decrypt) |
 | `privateKey` | Non-extractable RSA-OAEP private `CryptoKey` (decrypt) |
 | `access_token` | Current JWT (15 min), refreshed via the cookie |
-| `notes` | Synced list rows (ciphertext + `wrapped_cek` + `pinned`), plus bodies/comments for opened notes |
+| `notes` | Synced list rows (ciphertext + `wrapped_cek` + `has_unread_comment`), plus bodies/comments for opened notes |
 | `notes_cursor` | Keyset `next` cursor for the session's incremental sync |
-| `search_index` | Plaintext title + tags index built from the synced rows (no bodies) |
+| `search_index` | Plaintext title index built from the synced rows (no bodies, no tags) |

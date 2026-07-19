@@ -1,0 +1,32 @@
+/* Memoza typography.
+   Instrument Serif — display / headlines / note titles (premium, editorial).
+   Instrument Sans — body & UI (calm, readable).
+   JetBrains Mono  — page numbers, tags, meta, code. */
+
+:root {
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-sans:    "Instrument Sans", system-ui, -apple-system, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+
+  /* Type scale (display uses serif; everything else sans) */
+  --text-hero:   clamp(48px, 7vw, 92px);  /* serif, weight 400 */
+  --text-h1:     38px;   /* serif */
+  --text-h2:     27px;   /* serif, note titles */
+  --text-lg:     20px;
+  --text-body:   16px;
+  --text-sm:     14px;
+  --text-xs:     12px;   /* mono meta */
+  --text-2xs:    11px;   /* mono labels */
+
+  --lh-tight:    1.0;
+  --lh-snug:     1.2;
+  --lh-body:     1.6;
+
+  --tracking-display: -0.015em;
+  --tracking-mono:    0.05em;   /* page numbers */
+}
+
+/* Usage notes:
+   - Headlines: font-display, weight 400 (never bold the serif). Italic for emphasis words.
+   - Body/UI: font-sans; 700 for buttons, 600 for emphasis, 400 body.
+   - Page numbers ALWAYS mono, uppercase-ish, tracked: "PAGE 032". Zero-padded to 3 digits. */

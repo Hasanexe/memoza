@@ -10,7 +10,7 @@ spec in `docs/architecture/README.md` — not restated here.
 | Worker | Route | Role |
 |---|---|---|
 | `memoza-auth` | `api.memoza.io/auth/*` | Registration, login, refresh, logout, password change, password reset, account deletion; owns D1 `memoza_auth`, the JWT **private** key, and every user's key envelope + public key |
-| `memoza-gateway` | `api.memoza.io/*` (everything else) | Verifies EdDSA access JWTs (against the current + optional previous **public** key, for zero-downtime rotation), answers `/health` unauthenticated, strips inbound `Authorization`/`X-User-Id`/`X-User-Role`, attaches trusted values, forwards `/notes/*` to `memoza-notes` over a service binding; will also serve the authenticated public-key lookup |
+| `memoza-gateway` | `api.memoza.io/*` (everything else) | Verifies EdDSA access JWTs (against the current + optional previous **public** key, for zero-downtime rotation), answers `/health` and `/public/*` unauthenticated, strips inbound `Authorization`/`X-User-Id`/`X-User-Role`, attaches trusted values, forwards `/notes/*` to `memoza-notes` over a service binding; also serves the authenticated public-key lookup and composes the public-page read (`username` → `memoza-auth`, page content → `memoza-notes`) |
 
 Access tokens: EdDSA JWTs, 15 min, claims `user_id` + `role` (single role
 `Editor` for now). Refresh tokens: 32 random bytes, rotated on every refresh,
@@ -27,8 +27,10 @@ service.
 
 | Endpoint | Purpose | Status |
 |---|---|---|
-| `POST /auth/register` | Create account; store key envelope + public key; return access token + refresh cookie; send welcome email | Implemented |
-| `POST /auth/login` | Verify `authHash`; return tokens + `wrapped_dek` + `wrapped_private_key` + `kdf_iterations` | Implemented |
+| `GET /auth/username-available?username=&token=` | Requires a valid, unexpired **activation token** (no JWT exists yet at activation time — the token is the proof of a pending registration, so this is not an open public endpoint). Generic `{ "available": true|false }` — never reveals *why* unavailable (taken vs reserved vs retired) | Implemented |
+| `POST /auth/register` | Store key envelope + public key for an **inactive** account (no username yet). **Always a generic `202`** whether or not the email exists: new email → activation link mailed; existing email → "you already have an account" mailed. No tokens returned; no enumeration surface | Implemented |
+| `POST /auth/activate` | `{token, username}` from the emailed activation link: validates the token, claims the username (generic `409` if unavailable — pick another), sets `active=1`, deletes the token. The user then logs in normally | Implemented |
+| `POST /auth/login` | Verify `authHash`; return tokens + `wrapped_dek` + `wrapped_private_key` + `kdf_iterations` + `username`. An inactive account with **correct** credentials gets `403 "Not activated"` (leaks nothing — the caller already proved they hold the password); wrong credentials stay generic `401` | Implemented |
 | `POST /auth/refresh` | Rotate refresh token, new access token | Implemented |
 | `POST /auth/logout` | Delete refresh token, clear cookie | Implemented |
 | `PUT /auth/password` | Change password: swap `authHash` + `wrapped_dek` + `wrapped_private_key`; revoke all refresh tokens | Implemented |
@@ -36,11 +38,59 @@ service.
 | `POST /auth/reset/confirm` | Two-step: `{token,email}` → `{recovery_mode[, recovery_key]}`; full body → store new `authHash` + re-wrapped envelope, revoke all sessions | Implemented |
 | `DELETE /auth/account` | Delete user + tokens; fan out to `memoza-notes` to purge notes/grants/comments | Implemented |
 | `GET /internal/auth/public-key?email=` | Internal-only: recipient public-key lookup for sharing; reached via the gateway after JWT verification | Implemented |
+| `GET /internal/auth/resolve-username?username=` | Internal-only: `username → user_id`, no auth check (the caller — the gateway's public-page route — is itself unauthenticated by design). Matches **active** users only; `404` otherwise | Implemented |
+
+## Registration & activation (email-verified, enumeration-free)
+
+Registration is a two-step flow; no account can log in, share, or be resolved
+publicly until the emailed activation link is used:
+
+1. `POST /auth/register` — the client sends `email, name, password = authHash,
+   kdf_iterations` + the full key envelope (no username). The response is
+   **always** a generic `202` "check your email":
+   - **New email** → an inactive `users` row is created (envelope stored,
+     `username = NULL`, `active = 0`), an `activation_token` is issued
+     (hash-only, `ACTIVATION_TOKEN_TTL_MS`), and the activation link is
+     mailed.
+   - **Existing active email** → no row is touched; a "you already have an
+     account — forgot your password?" mail is sent instead.
+   - **Existing pending (inactive) email** → the row's envelope/credential is
+     overwritten with the new submission and a fresh activation token is
+     mailed (harmless: only the mailbox owner can ever activate, so whoever
+     controls the mailbox wins).
+   The client shows the recovery key immediately after this call regardless
+   of outcome (it was generated client-side and this is the only moment it
+   exists; for an already-registered email it's simply void).
+2. **Activation** — the link opens the app's activation screen, which asks the
+   user to pick their permanent `username` (live availability check via
+   `GET /auth/username-available`, gated by the same activation token), then
+   calls `POST /auth/activate {token, username}`. On success the account is
+   active and the user logs in normally with their password. Clicking the
+   link alone never grants a session — activation proves mailbox ownership,
+   not password knowledge.
+
+Unactivated rows older than `UNACTIVATED_RETENTION_MS` are lazily deleted
+(during register), so an abandoned or squatted registration frees the email
+again. Rate limiting for `/auth/*` is an edge concern — see
+`CLOUDFLARE-HARDENING.txt`.
 
 Gateway routing: `/notes/*` → `NOTES` service binding
 (`/notes/internal/*` blocked, per security rules); `GET /users/public-key` →
 verify JWT, then `AUTH` service binding → `/internal/auth/public-key`;
-`GET /health` answered by the gateway itself.
+`GET /health` answered by the gateway itself; `GET /public/{username}/{page_no}`
+answered **before** JWT verification (like `/health`) — the gateway calls
+`AUTH` → `/internal/auth/resolve-username`, then, on a hit, `NOTES` →
+`/notes/internal/public/{owner_id}/{page_no}`, and returns whichever 404s
+first or the page content (see `docs/architecture/2-notes/README.md`).
+Because this route composes internal URLs from anonymous, attacker-controlled
+path parts, the gateway **must validate before composing**: `username` must
+match the registration format and `page_no` must be digits only — anything
+else is an immediate `404`, never forwarded (a raw `page_no` like
+`1/../../purge-user` would otherwise normalize into a different internal
+endpoint). The response to the public caller carries **only**
+`{title, body, format}` — everything else on the internal row (`owner_id`,
+`note_id`, `updated_at`) is stripped; nothing an anonymous reader doesn't
+strictly need is ever returned.
 
 ## Internal-endpoint isolation (`/internal/auth/public-key`)
 
@@ -63,6 +113,67 @@ check needed — see `NAMING-CONVENTIONS.md`'s "Internal-only" section for the
 general pattern. `memoza-notes` doesn't need this at all because it has no
 public `routes` for any path.
 
+## Username (public handle, separate from login)
+
+A permanent, unique, plaintext `username` on each user row — purely a public
+handle for notebook page links (`app.memoza.io/<username>/<page_no>`,
+`memoza://username/pageno`, `.mmp` shortcut files) and, optionally, a nicer
+share target than an email address. **It does not touch authentication.**
+
+This was a real fork: the canonical crypto spec derives the KDF salt from
+`SHA-256(lowercase email)`, so "log in with a username" would require either
+(a) making username the salt too — workable, but it costs email login and
+couples a public, permanent handle to key derivation — or (b) a random
+per-account salt behind a pre-login lookup — workable, but it reopens the
+user-enumeration surface the email-salt trick was specifically designed to
+avoid. **Neither cost is necessary**, because nothing about public links
+actually requires username to be the *login* identity:
+
+- **Login stays email-only.** `salt = SHA-256(email)`, no pre-login endpoint,
+  zero enumeration surface, no KDF change — the entire crypto flow in the
+  canonical spec is untouched by this feature.
+- **Username is picked at activation** (see "Registration & activation") — not
+  at registration — and is **immutable** once set: a rename would silently
+  break every public link, `.mmp` file, and `memoza://` shortcut ever issued,
+  so there's no rename path (consistent with the "permanent numbering" promise
+  the pages feature itself makes). Until activation the `users` row has
+  `username = NULL` and is invisible to `resolve-username`.
+- **Format rule (normative)**: 3–32 characters, `[a-z0-9-]` only, no leading/
+  trailing hyphen. Stored and compared **lowercase** (`ada` and `Ada` are the
+  same handle — the client lowercases before sending; the server normalizes
+  and rejects anything outside the charset with `400`). This one rule closes
+  three holes at once: no `@`/`.` means the availability endpoint can't be
+  used to probe email addresses; no `/`/`%`/dots means a username can never
+  break the gateway's URL composition or collide with static-asset paths on
+  `app.memoza.io`; ASCII-only kills Unicode-homograph impersonation on public
+  pages.
+- **Never reused**: account deletion inserts the username into
+  `retired_usernames` (see `table.md`) — otherwise a new user could register a
+  deleted user's handle and every previously shared public link
+  (`app.memoza.io/<username>/<page_no>`, `.mmp` files, bookmarks) would
+  silently resolve to the *new* person's pages: a content-takeover/phishing
+  primitive. Register and the availability check both consult `users` **and**
+  `retired_usernames`. The same table is pre-seeded with reserved
+  system/product words (`admin`, `api`, `auth`, `public`, `assets`, `fonts`,
+  `memoza`, … — full list in `table.md`) so they can never be claimed.
+- **Resolution is one internal endpoint** (`/internal/auth/resolve-username`,
+  above), unauthenticated by construction because its only caller is the
+  gateway's already-unauthenticated public-page route. It never returns an
+  email — only a `user_id` — so it adds no enumeration surface beyond "this
+  username exists," which is inherent to any public link scheme.
+- **Live availability check while typing**: `GET /auth/username-available`
+  (above) is called (debounced, e.g. 300–500ms after the last keystroke) by
+  the **activation screen** so the user sees "available" / "not available"
+  before submitting. It requires the caller's **activation token** — the user
+  has no JWT yet, but the token proves a pending registration, so this is not
+  an open, anonymous enumeration/DoS endpoint, and every probe is tied to one
+  pending account (loggable, countable, blockable). The response is **generic
+  by design**: `available: false` never says whether the name is taken,
+  reserved, or retired. `POST /auth/activate` still does the authoritative
+  uniqueness check (generic `409` on conflict) — the availability endpoint is
+  a UX nicety, not the source of truth, since a race between the check and
+  the submit is possible.
+
 ## Password reset (recovery-key based)
 
 The reset flow never lets the server see key material:
@@ -80,7 +191,9 @@ The reset flow never lets the server see key material:
 ## Account deletion
 
 `DELETE /auth/account` (current credential re-verified) deletes the `users`
-row, all `refresh_tokens`, and all `reset_token` rows, then calls
+row (first inserting its `username` into `retired_usernames` — deleted handles
+are never re-registrable), all `refresh_tokens`, and all `reset_token` rows,
+then calls
 `memoza-notes` over a service binding (`/notes/internal/purge-user`) to delete
 that user's notes, grants, and comments. Notes the user **owned** are purged
 (their share grants go with them); notes shared *to* the user lose only that
@@ -116,6 +229,35 @@ user's grant.
   purge. Rejected: leaving notes orphaned (privacy + storage cost).
 - **Single role `Editor`** — no admin UI; the gateway RBAC hook stays trivial
   until a real second role exists.
+- **Username is a separate public handle, not a login credential (Path 3 of
+  three considered)** — login-by-username either costs email login (username
+  becomes the KDF salt) or costs a new enumeration surface (random salt + a
+  pre-login lookup). Keeping username purely for public links/sharing gets the
+  same product outcome (stable public URLs, a shareable handle) for **zero**
+  crypto risk: the existing email-salted login flow is untouched. Rejected:
+  username-as-salt (loses email login); random per-user salt with a pre-login
+  endpoint (reopens enumeration, and only *that* endpoint would need to be
+  unauthenticated — not the whole login flow).
+- **Username is immutable** — public links, `.mmp` files, and `memoza://`
+  shortcuts embed it directly; a rename would break every one silently. No
+  rename endpoint exists. Rejected: renameable-with-a-warning (adds a redirect/
+  history table for a case the product doesn't need).
+- **Registration is generic-202 + email activation; username moves to the
+  activation step** — a distinguishable register response ("email exists") is
+  an email-enumeration oracle, and a public pre-login username-availability
+  endpoint is an anonymous enumeration/DoS surface on the login database.
+  Activation closes both: register always answers the same thing, and the
+  availability check is gated by the activation token (tied to one pending
+  account). It also means every live account has a verified mailbox — a
+  prerequisite the subscription feature needs anyway. Rejected: 409-on-existing
+  register (enumeration); public username-available (open D1-read DoS surface);
+  username at registration (forces the public availability endpoint to exist).
+- **Activation never grants a session** — the link proves mailbox ownership
+  only; login still requires the password-derived `authHash`. This makes the
+  "attacker registers a victim's email first" case harmless: the victim's
+  activation click doesn't hand the attacker a session, and the attacker can't
+  log in without activating a mailbox they don't control. Stale inactive rows
+  are lazily purged after `UNACTIVATED_RETENTION_MS` so the email frees again.
 
 ## JWT signing-key rotation
 
@@ -209,3 +351,81 @@ not a code change.
   envelope before it's authenticated, and without it there's nothing to unwrap
   with the recovery key. Added both fields to the probe response (both modes).
   `api-auth-usage.md` updated to match.
+- 2026-07-15 (design) — Added a permanent, unique `username` public handle
+  (registration field, immutable, separate from login) to support the notes
+  service's page-publishing feature. Considered making username the login
+  identity/KDF salt (costs email login) and a random-salt pre-login lookup
+  (reopens enumeration) before settling on "username never touches auth" —
+  see "Username (public handle, separate from login)" above. Added the
+  internal `resolve-username` endpoint and the gateway's unauthenticated
+  `GET /public/{username}/{page_no}` composition, plus a public
+  `GET /auth/username-available` endpoint for a live availability check in the
+  registration form. Design only; not yet implemented.
+- 2026-07-15 (security review) — Hardened the username design: normative
+  format rule (3–32, `[a-z0-9-]`, lowercase-normalized, case-insensitive
+  uniqueness); new `retired_usernames` table (deleted handles never
+  re-registrable — prevents public-link takeover — plus a seeded reserved-word
+  list); the gateway must validate `username`/`page_no` before composing
+  internal URLs and must whitelist the public-page response fields. Suggested
+  edge-level hardening (rate limiting, `/public/*` caching, response headers)
+  recorded in `CLOUDFLARE-HARDENING.txt` at the repo root. Still design only.
+- 2026-07-16 (design) — Registration redesigned to generic-202 + email
+  activation: register no longer collects a username or returns tokens; the
+  account stays inactive until `POST /auth/activate {token, username}` — the
+  activation step is where the username is picked, and
+  `GET /auth/username-available` is now gated by the activation token instead
+  of being public (availability answers are generic — never taken vs
+  reserved). Login returns `403 "Not activated"` on correct credentials for an
+  inactive account. New `activation_token` table +
+  `ACTIVATION_TOKEN_TTL_MS`/`UNACTIVATED_RETENTION_MS` vars. Public-page
+  response trimmed to `{title, body, format}` (dropped `updated_at`). Old
+  pre-prod rows don't matter — the DB will be recreated. Design only; build
+  plan in `backend-services/1-user-access-management/IMPLEMENTATION-PLAN.md`.
+- 2026-07-16 (implemented) — Built the whole delta above: `users` gained
+  `username` (nullable, unique) and `active` now defaults to `0`; added
+  `activation_token` and `retired_usernames` (seeded with the reserved-word
+  list). `register` is now a single `INSERT … ON CONFLICT(email) DO UPDATE …
+  WHERE users.active = 0 RETURNING id` — atomic instead of read-then-write, so
+  a concurrent duplicate registration can't race the generic-202 branch;
+  `RETURNING` absent means an active row already owns the email, so a
+  "you already have an account" mail goes out instead of an activation link.
+  Added `activate` (single `UPDATE … WHERE username IS NULL AND NOT EXISTS
+  (retired check) …`, `UNIQUE` violation on `username` caught for the
+  taken-by-another-concurrent-activation case — both collapse to the same
+  generic `409`) and `username-available`. `login` returns `403 "Not
+  activated"` for `active=0`. Added `GET /internal/auth/resolve-username` and
+  the gateway's unauthenticated `GET /public/{username}/{page_no}` compose
+  (validates `username`/`page_no` before building any internal URL; returns
+  only `{title, body, format}`). Added `X-Content-Type-Options: nosniff`
+  (shared `withSecurityHeaders`, also folded into `handlePreflight`) and
+  `Cache-Control` (`no-store` everywhere on both workers except `public,
+  max-age=60` on `/public/*`). `isValidUsernameFormat`/`normalizeUsername`
+  moved to `@memoza/shared` since both auth (activate/username-available) and
+  the gateway (public-page validation) must apply the identical format check.
+  Account deletion now retires the username (`reason='deleted'`) before
+  deleting the row, skipped when still `NULL`. Plan deleted.
+- 2026-07-18 (implemented) — Converted `auth-worker` from a hand-run
+  `schema.sql` to tracked migrations, matching `memoza-notes`: the full
+  5-table schema (incl. the `retired_usernames` seed data) became
+  `migrations/0001_init.sql`, `schema.sql` deleted. The pre-existing remote
+  `memoza_auth` DB predated the current schema (old 3-table shape, one stale
+  test row missing `username`/`activation_token`/`retired_usernames`
+  entirely) so it was wiped and rebaselined from `0001_init.sql` rather than
+  migrated in place.
+- 2026-07-18 (implemented) — `POST /auth/login` now also returns `username`.
+  Building a published page's shareable link (`app.memoza.io/<username>/
+  <page_no>`, `frontend-core`'s notebook UI) needs the caller's own username,
+  and no endpoint previously returned it to its owner — login was the natural
+  place since it already returns the rest of the per-user envelope. See
+  `docs/api/api-auth-usage.md`.
+- 2026-07-19 (implemented) — CORS now supports an allowlist instead of a
+  single origin: `shared/src/cors.ts` reads a comma-separated var and checks
+  membership (still exact-match, still reflects only the matched origin, never
+  a wildcard). New `CORS_ALLOWED_ORIGINS` var on both workers, set to
+  `https://app.memoza.io,tauri://localhost,http://tauri.localhost` so the
+  Tauri desktop shell (`frontend/desktop`) can call the API — Tauri's webview
+  sends `Origin: tauri://localhost` on macOS/Linux and `http://tauri.localhost`
+  on Windows, neither of which is the web app's origin. `FRONTEND_ORIGIN`
+  stays on `memoza-auth` only, now scoped to its original other job of
+  building activation/reset-link email URLs; dropped entirely from
+  `memoza-gateway`, which had no other use for it.

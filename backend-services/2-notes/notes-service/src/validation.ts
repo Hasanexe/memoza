@@ -21,3 +21,7 @@ export function validateOptionalCiphertext(
   if (value === null || value === undefined) return true;
   return validateCiphertext(value, maxBytes);
 }
+
+export function validateFormat(value: unknown): value is 'md' | 'html' {
+  return value === 'md' || value === 'html';
+}

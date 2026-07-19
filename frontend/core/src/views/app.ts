@@ -1,11 +1,21 @@
 import { isUnlocked } from '../crypto/session';
 import type { Store } from '../store/types';
-import { renderRegister, renderLogin, renderLock, renderResetRequest, renderResetConfirm } from './authViews';
+import {
+  renderRegister,
+  renderLogin,
+  renderLock,
+  renderResetRequest,
+  renderResetConfirm,
+  renderActivate,
+} from './authViews';
 import { renderList } from './listView';
 import { renderEditor } from './editorView';
 import { renderSettings } from './settingsView';
+import { renderPublicReader } from './publicReaderView';
 import { clear } from './dom';
 import { EMAIL_STORAGE_KEY } from '../config';
+
+const PAGE_ROUTE_RE = /^[1-9][0-9]*$/;
 
 export interface UnlockProvider {
   isAvailable(): Promise<boolean>;
@@ -17,13 +27,22 @@ export interface AppContext {
   store: Store;
   navigate: (path: string) => void;
   unlockProvider?: UnlockProvider;
-  onUnlock?: (session: { userId: string; email: string; wrappedDek: string; wrappedPrivateKey: string }) => void | Promise<void>;
+  onUnlock?: (session: {
+    userId: string;
+    email: string;
+    username: string;
+    wrappedDek: string;
+    wrappedPrivateKey: string;
+  }) => void | Promise<void>;
   onLogout?: () => void | Promise<void>;
   biometricControl?: {
     isEnabled(): Promise<boolean>;
     enable(password: string): Promise<void>;
     disable(): Promise<void>;
   };
+  /** Persist the last-used email so returning users see a quick unlock screen. Defaults to true (desktop's biometric unlock relies on this). Web opts out. */
+  rememberEmail?: boolean;
+  createShortcut?: (pageNo: number, title: string) => Promise<void>;
 }
 
 function currentRoute(): { segments: string[]; params: URLSearchParams } {
@@ -37,6 +56,8 @@ export interface MountOptions {
   onUnlock?: AppContext['onUnlock'];
   onLogout?: AppContext['onLogout'];
   biometricControl?: AppContext['biometricControl'];
+  rememberEmail?: AppContext['rememberEmail'];
+  createShortcut?: AppContext['createShortcut'];
 }
 
 export function mountApp(root: HTMLElement, store: Store, options: MountOptions = {}): { refresh: () => void } {
@@ -52,6 +73,11 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
     clear(root);
     const { segments, params } = currentRoute();
 
+    if (segments.length === 2 && PAGE_ROUTE_RE.test(segments[1])) {
+      void renderPublicReader(root, segments[0], Number(segments[1]));
+      return;
+    }
+
     if (!isUnlocked()) {
       if (segments[0] === 'reset' && params.get('token')) {
         void renderResetConfirm(ctx, params);
@@ -65,7 +91,11 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
         renderRegister(ctx);
         return;
       }
-      const email = localStorage.getItem(EMAIL_STORAGE_KEY);
+      if (segments[0] === 'activate') {
+        void renderActivate(ctx, params);
+        return;
+      }
+      const email = ctx.rememberEmail !== false ? localStorage.getItem(EMAIL_STORAGE_KEY) : null;
       if (email) {
         void renderLock(ctx, email);
       } else {
@@ -82,7 +112,15 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
       void renderEditor(ctx, segments[1] ?? null);
       return;
     }
-    void renderList(ctx);
+    if (segments[0] === 'shared') {
+      renderList(ctx, 'shared');
+      return;
+    }
+    if (segments[0] === 'trash') {
+      renderList(ctx, 'trash');
+      return;
+    }
+    renderList(ctx, 'mine');
   }
 
   window.addEventListener('hashchange', render);

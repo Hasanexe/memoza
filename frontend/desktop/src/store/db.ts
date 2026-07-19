@@ -9,7 +9,9 @@ const MIGRATIONS = [
     tags_ct TEXT,
     wrapped_cek TEXT NOT NULL,
     wrap_method TEXT NOT NULL,
-    pinned INTEGER NOT NULL DEFAULT 0,
+    has_unread_comment INTEGER NOT NULL DEFAULT 0,
+    page_no INTEGER,
+    is_public INTEGER NOT NULL DEFAULT 0,
     rev INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -30,6 +32,7 @@ const MIGRATIONS = [
     id INTEGER PRIMARY KEY CHECK (id = 1),
     user_id TEXT NOT NULL,
     email TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
     wrapped_dek TEXT NOT NULL,
     wrapped_private_key TEXT NOT NULL,
     biometric_enabled INTEGER NOT NULL DEFAULT 0
@@ -45,6 +48,12 @@ const MIGRATIONS = [
   )`,
 ];
 
+const ALTER_STATEMENTS = [
+  'ALTER TABLE local_note ADD COLUMN page_no INTEGER',
+  'ALTER TABLE local_note ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0',
+  "ALTER TABLE local_account ADD COLUMN username TEXT NOT NULL DEFAULT ''",
+];
+
 let dbPromise: Promise<Database> | null = null;
 
 export async function getDb(): Promise<Database> {
@@ -52,6 +61,13 @@ export async function getDb(): Promise<Database> {
     dbPromise = (async () => {
       const db = await Database.load('sqlite:memoza.db');
       for (const statement of MIGRATIONS) await db.execute(statement);
+      for (const statement of ALTER_STATEMENTS) {
+        try {
+          await db.execute(statement);
+        } catch {
+          // column already exists on an upgraded database
+        }
+      }
       const seed = await db.select<{ id: number }[]>('SELECT id FROM sync_state WHERE id = 1');
       if (seed.length === 0) await db.execute('INSERT INTO sync_state (id, cursor) VALUES (1, NULL)');
       return db;

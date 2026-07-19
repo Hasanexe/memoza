@@ -1,3 +1,5 @@
+import { isValidUsernameFormat } from '@memoza/shared';
+
 const MAX_AUTH_HASH_LEN = 512;
 const MAX_PUBLIC_KEY_LEN = 2048;
 const MAX_ENVELOPE_LEN = 4096;
@@ -25,4 +27,8 @@ export function validateKdfIterations(value: unknown): value is number {
 
 export function validateRecoveryMode(value: unknown): value is 'private' | 'convenient' {
   return value === 'private' || value === 'convenient';
+}
+
+export function validateUsername(value: unknown): value is string {
+  return typeof value === 'string' && isValidUsernameFormat(value);
 }

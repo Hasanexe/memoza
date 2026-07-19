@@ -5,6 +5,7 @@ import * as noteCrypto from '@memoza/core/crypto/note';
 import { importRecipientPublicKey } from '@memoza/core/crypto/keys';
 import { requireSession } from '@memoza/core/crypto/session';
 import { search as searchIndex } from '@memoza/core/search';
+import { getFormat } from '@memoza/core/views/controlTags';
 import type { Store, DecryptedNoteSummary, DecryptedNote, DecryptedComment } from '@memoza/core/store/types';
 import type { NoteRow, FullNote } from '@memoza/core/api/notes';
 
@@ -39,7 +40,9 @@ export function createMemoryStore(): Store {
       isOwner: state.row.owner_id === session.userId,
       title: state.title,
       tags: state.tags,
-      pinned: state.row.pinned === 1,
+      hasUnreadComment: state.row.has_unread_comment,
+      pageNo: state.row.page_no,
+      isPublic: state.row.is_public,
       rev: state.row.rev,
       createdAt: state.row.created_at,
       updatedAt: state.row.updated_at,
@@ -105,7 +108,9 @@ export function createMemoryStore(): Store {
       tags_ct: tagsCt,
       wrapped_cek: wrappedCek,
       wrap_method: 'dek',
-      pinned: 0,
+      has_unread_comment: false,
+      page_no: created.page_no,
+      is_public: false,
       rev: created.rev,
       created_at: created.created_at,
       updated_at: created.updated_at,
@@ -125,6 +130,9 @@ export function createMemoryStore(): Store {
     const titleCt = await noteCrypto.sealTitle(existing.cek, id, title);
     const bodyCt = await noteCrypto.sealBody(existing.cek, id, body);
     const tagsCt = tags.length > 0 ? await noteCrypto.sealTags(existing.cek, id, tags) : null;
+    const mirror = existing.row.is_public
+      ? { title, body, format: getFormat(tags) }
+      : {};
 
     try {
       const updated = await notesApi.updateNote(id, {
@@ -132,6 +140,7 @@ export function createMemoryStore(): Store {
         body_ct: bodyCt,
         tags_ct: tagsCt,
         base_rev: existing.row.rev,
+        ...mirror,
       });
       const state: NoteState = {
         row: { ...existing.row, title_ct: titleCt, tags_ct: tagsCt, rev: updated.rev, updated_at: updated.updated_at },
@@ -152,12 +161,6 @@ export function createMemoryStore(): Store {
       }
       throw err;
     }
-  }
-
-  async function setPinned(id: string, pinned: boolean): Promise<void> {
-    const res = await notesApi.setPinned(id, pinned ? 1 : 0);
-    const state = notes.get(id);
-    if (state) state.row = { ...state.row, pinned: pinned ? 1 : 0, updated_at: res.updated_at };
   }
 
   async function trashNote(id: string): Promise<void> {
@@ -194,6 +197,25 @@ export function createMemoryStore(): Store {
     await notesApi.unshareNote(id, userId);
   }
 
+  async function publish(id: string): Promise<number> {
+    const session = requireSession();
+    let state = notes.get(id);
+    if (!state) throw new Error('Note not loaded locally');
+    if (state.row.owner_id !== session.userId) throw new Error('Only the owner can publish');
+
+    if (state.body === null) {
+      const full = await notesApi.getNote(id);
+      state = await unwrapAndDecrypt(full);
+      state.body = await noteCrypto.openBody(state.cek, id, full.body_ct);
+    }
+
+    const format = getFormat(state.tags);
+    const res = await notesApi.publishNote(id, { title: state.title, body: state.body, format });
+    state.row = { ...state.row, is_public: true, page_no: res.page_no };
+    notes.set(id, state);
+    return res.page_no;
+  }
+
   async function listComments(noteId: string): Promise<DecryptedComment[]> {
     const state = notes.get(noteId);
     if (!state) throw new Error('Note not loaded locally');
@@ -222,7 +244,7 @@ export function createMemoryStore(): Store {
   }
 
   async function search(query: string): Promise<DecryptedNoteSummary[]> {
-    const entries = Array.from(notes.values()).map(s => ({ id: s.row.id, title: s.title, tags: s.tags }));
+    const entries = Array.from(notes.values()).map(s => ({ id: s.row.id, title: s.title }));
     const ids = new Set(searchIndex(entries, query));
     const all = await listNotes();
     return all.filter(n => ids.has(n.id));
@@ -233,12 +255,12 @@ export function createMemoryStore(): Store {
     listNotes,
     getNote,
     saveNote,
-    setPinned,
     trashNote,
     restoreNote,
     purgeNote,
     shareNote,
     unshareNote,
+    publish,
     listComments,
     postComment,
     deleteComment,

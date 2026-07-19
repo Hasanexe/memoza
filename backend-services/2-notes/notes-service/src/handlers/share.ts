@@ -43,12 +43,12 @@ export async function handleShareNote(
 
   const now = Date.now();
   await env.DB.prepare(
-    `INSERT INTO note_grant (note_id, user_id, wrapped_cek, wrap_method, pinned, updated_at, revoked_at)
-     VALUES (?, ?, ?, 'pubkey', 0, ?, NULL)
+    `INSERT INTO note_grant (note_id, user_id, wrapped_cek, wrap_method, last_viewed_at, updated_at, revoked_at)
+     VALUES (?, ?, ?, 'pubkey', ?, ?, NULL)
      ON CONFLICT (note_id, user_id) DO UPDATE SET
        wrapped_cek = excluded.wrapped_cek, wrap_method = 'pubkey', updated_at = excluded.updated_at, revoked_at = NULL`
   )
-    .bind(noteId, recipient_id, wrapped_cek, now)
+    .bind(noteId, recipient_id, wrapped_cek, now, now)
     .run();
 
   return json({ ok: true }, 200);

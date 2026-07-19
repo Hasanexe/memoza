@@ -7,6 +7,7 @@ import type { Store, DecryptedNoteSummary, DecryptedNote, DecryptedComment } fro
 import type { FullNote } from '@memoza/core/api/notes';
 import { importRecipientPublicKey } from '@memoza/core/crypto/keys';
 import * as authApi from '@memoza/core/api/auth';
+import { getFormat } from '@memoza/core/views/controlTags';
 import { getDb, getCursor, setCursor } from './db';
 import { enqueue, drainQueue } from './queue';
 
@@ -18,7 +19,9 @@ interface LocalNoteRow {
   tags_ct: string | null;
   wrapped_cek: string;
   wrap_method: 'dek' | 'pubkey';
-  pinned: number;
+  has_unread_comment: number;
+  page_no: number | null;
+  is_public: number;
   rev: number;
   created_at: number;
   updated_at: number;
@@ -65,11 +68,12 @@ export function createSqliteStore(): Store {
   async function upsertLocalNote(row: LocalNoteRow): Promise<void> {
     const db = await getDb();
     await db.execute(
-      `INSERT INTO local_note (id, owner_id, title_ct, body_ct, tags_ct, wrapped_cek, wrap_method, pinned, rev, created_at, updated_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO local_note (id, owner_id, title_ct, body_ct, tags_ct, wrapped_cek, wrap_method, has_unread_comment, page_no, is_public, rev, created_at, updated_at, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
          owner_id = excluded.owner_id, title_ct = excluded.title_ct, body_ct = excluded.body_ct, tags_ct = excluded.tags_ct,
-         wrapped_cek = excluded.wrapped_cek, wrap_method = excluded.wrap_method, pinned = excluded.pinned, rev = excluded.rev,
+         wrapped_cek = excluded.wrapped_cek, wrap_method = excluded.wrap_method, has_unread_comment = excluded.has_unread_comment,
+         page_no = excluded.page_no, is_public = excluded.is_public, rev = excluded.rev,
          created_at = excluded.created_at, updated_at = excluded.updated_at, deleted_at = excluded.deleted_at`,
       [
         row.id,
@@ -79,7 +83,9 @@ export function createSqliteStore(): Store {
         row.tags_ct,
         row.wrapped_cek,
         row.wrap_method,
-        row.pinned,
+        row.has_unread_comment,
+        row.page_no,
+        row.is_public,
         row.rev,
         row.created_at,
         row.updated_at,
@@ -121,16 +127,19 @@ export function createSqliteStore(): Store {
         const existing = await getLocalRow(row.id);
         if (existing && existing.rev === row.rev) {
           const db = await getDb();
-          await db.execute('UPDATE local_note SET pinned = ?, updated_at = ?, deleted_at = ? WHERE id = ?', [
-            row.pinned,
-            row.updated_at,
-            row.deleted_at,
-            row.id,
-          ]);
+          await db.execute(
+            'UPDATE local_note SET has_unread_comment = ?, is_public = ?, updated_at = ?, deleted_at = ? WHERE id = ?',
+            [row.has_unread_comment ? 1 : 0, row.is_public ? 1 : 0, row.updated_at, row.deleted_at, row.id]
+          );
           continue;
         }
         const full = await notesApi.getNote(row.id);
-        await upsertLocalNote({ ...full, pinned: row.pinned, updated_at: row.updated_at });
+        await upsertLocalNote({
+          ...full,
+          has_unread_comment: row.has_unread_comment ? 1 : 0,
+          is_public: full.is_public ? 1 : 0,
+          updated_at: row.updated_at,
+        });
       }
 
       for (const id of [...page.tombstones, ...page.revoked]) await deleteLocalNote(id);
@@ -149,7 +158,9 @@ export function createSqliteStore(): Store {
       isOwner: row.owner_id === session.userId,
       title: entry.title,
       tags: entry.tags,
-      pinned: row.pinned === 1,
+      hasUnreadComment: row.has_unread_comment === 1,
+      pageNo: row.page_no,
+      isPublic: row.is_public === 1,
       rev: row.rev,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -169,7 +180,11 @@ export function createSqliteStore(): Store {
     if (!row) {
       try {
         const full = await notesApi.getNote(id);
-        await upsertLocalNote({ ...full });
+        await upsertLocalNote({
+          ...full,
+          has_unread_comment: full.has_unread_comment ? 1 : 0,
+          is_public: full.is_public ? 1 : 0,
+        });
         row = await getLocalRow(id);
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) return null;
@@ -201,7 +216,9 @@ export function createSqliteStore(): Store {
       tags_ct: tagsCt,
       wrapped_cek: wrappedCek,
       wrap_method: 'dek',
-      pinned: 0,
+      has_unread_comment: 0,
+      page_no: null,
+      is_public: 0,
       rev: 1,
       created_at: now,
       updated_at: now,
@@ -228,16 +245,18 @@ export function createSqliteStore(): Store {
 
     const updatedRow: LocalNoteRow = { ...row, title_ct: titleCt, body_ct: bodyCt, tags_ct: tagsCt, updated_at: now };
     await upsertLocalNote(updatedRow);
-    await enqueue({ kind: 'update', noteId: id, title_ct: titleCt, body_ct: bodyCt, tags_ct: tagsCt, base_rev: row.rev });
+    await enqueue({
+      kind: 'update',
+      noteId: id,
+      title_ct: titleCt,
+      body_ct: bodyCt,
+      tags_ct: tagsCt,
+      base_rev: row.rev,
+      isPublic: row.is_public === 1,
+    });
 
     const newEntry = cache.get(id) as CacheEntry;
     return { ...toSummary(id, updatedRow, newEntry), body };
-  }
-
-  async function setPinned(id: string, pinned: boolean): Promise<void> {
-    const db = await getDb();
-    await db.execute('UPDATE local_note SET pinned = ?, updated_at = ? WHERE id = ?', [pinned ? 1 : 0, Date.now(), id]);
-    await enqueue({ kind: 'pin', noteId: id, pinned: pinned ? 1 : 0 });
   }
 
   async function trashNote(id: string): Promise<void> {
@@ -272,6 +291,22 @@ export function createSqliteStore(): Store {
 
   async function unshareNote(id: string, userId: string): Promise<void> {
     await enqueue({ kind: 'unshare', noteId: id, userId });
+  }
+
+  async function publish(id: string): Promise<number> {
+    const session = requireSession();
+    const row = await getLocalRow(id);
+    const entry = cache.get(id);
+    if (!row || !entry) throw new Error('Note not loaded locally');
+    if (row.owner_id !== session.userId) throw new Error('Only the owner can publish');
+
+    const body = await noteCrypto.openBody(entry.cek, id, row.body_ct);
+    const format = getFormat(entry.tags);
+    const res = await notesApi.publishNote(id, { title: entry.title, body, format });
+
+    const db = await getDb();
+    await db.execute('UPDATE local_note SET is_public = 1, page_no = ? WHERE id = ?', [res.page_no, id]);
+    return res.page_no;
   }
 
   async function listComments(noteId: string): Promise<DecryptedComment[]> {
@@ -336,17 +371,17 @@ export function createSqliteStore(): Store {
     if (cache.size === 0) await loadCacheFromDb();
     const db = await getDb();
     const rows = await db.select<LocalNoteRow[]>('SELECT * FROM local_note');
-    const entries = rows.filter(r => cache.has(r.id)).map(r => ({ id: r.id, title: (cache.get(r.id) as CacheEntry).title, tags: (cache.get(r.id) as CacheEntry).tags }));
+    const entries = rows.filter(r => cache.has(r.id)).map(r => ({ id: r.id, title: (cache.get(r.id) as CacheEntry).title }));
 
     const q = query.trim().toLowerCase();
     let matchIds: Set<string>;
     if (!q) {
       matchIds = new Set(entries.map(e => e.id));
     } else {
-      const titleTagMatches = new Set(searchIndex(entries, query));
+      const titleMatches = new Set(searchIndex(entries, query));
       const bodyMatches = new Set<string>();
       for (const row of rows) {
-        if (titleTagMatches.has(row.id)) continue;
+        if (titleMatches.has(row.id)) continue;
         const cacheEntry = cache.get(row.id);
         if (!cacheEntry) continue;
         try {
@@ -356,7 +391,7 @@ export function createSqliteStore(): Store {
           continue;
         }
       }
-      matchIds = new Set([...titleTagMatches, ...bodyMatches]);
+      matchIds = new Set([...titleMatches, ...bodyMatches]);
     }
 
     return rows
@@ -369,12 +404,12 @@ export function createSqliteStore(): Store {
     listNotes,
     getNote,
     saveNote,
-    setPinned,
     trashNote,
     restoreNote,
     purgeNote,
     shareNote,
     unshareNote,
+    publish,
     listComments,
     postComment,
     deleteComment,

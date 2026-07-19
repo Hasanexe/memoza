@@ -1,0 +1,65 @@
+/* Memoza color tokens — "Ink & Paper".
+   Warm cream paper + clay accent. Dark mode is a WARM near-black, never cold gray.
+   Toggle dark mode by adding [data-theme="dark"] on <html> (or .dark on any container). */
+
+:root {
+  /* Surfaces */
+  --paper:        #F6F1E7;  /* app background */
+  --surface:      #FCFAF5;  /* cards, sheets */
+  --surface-2:    #FFFFFF;  /* raised inputs on surface */
+  --line:         #E6DFD1;  /* borders / dividers */
+  --fill:         #EEE8DB;  /* subtle track / disabled fill */
+
+  /* Ink (text) */
+  --ink:          #2B2723;  /* primary text */
+  --ink-soft:     #57514A;  /* secondary text */
+  --ink-muted:    #6E675C;  /* meta / captions — 4.96:1 on --paper (AA) */
+  --ink-faint:    #B7AFA2;  /* placeholders / disabled text */
+
+  /* Accent — Clay */
+  --clay:         #C15F3C;  /* primary accent */
+  --clay-hover:   #A64E30;
+  --clay-shelf:   #8A3E24;  /* 3D button bottom shelf */
+  --clay-soft:    #F6E5DC;  /* tinted backgrounds / badges */
+
+  /* Highlight — Gold (checklist strike, marker) */
+  --gold:         #F0D9A8;  /* highlighter block */
+  --gold-strong:  #E3A544;  /* strikethrough line */
+
+  /* Semantic */
+  --success:      #6C8C55;
+  --warning:      #D99A2B;
+  --danger:       #C24A3E;
+  --shared:       #9A6B93;
+
+  /* Button shelf for neutral buttons */
+  --shelf-neutral: #E6DFD1;
+}
+
+[data-theme="dark"], .dark {
+  --paper:        #1E1C18;
+  --surface:      #29261F;
+  --surface-2:    #322F27;
+  --line:         #3B362E;
+  --fill:         #322F27;
+
+  --ink:          #ECE6D8;
+  --ink-soft:     #C9C1B0;
+  --ink-muted:    #A9A196;
+  --ink-faint:    #837C70;
+
+  --clay:         #D9805E;  /* lifted for contrast on dark */
+  --clay-hover:   #E39271;
+  --clay-shelf:   #A5583B;
+  --clay-soft:    #37301F;
+
+  --gold:         #4A3E24;
+  --gold-strong:  #E7B25A;
+
+  --success:      #8CAE76;
+  --warning:      #E7B25A;
+  --danger:       #E07264;
+  --shared:       #C39ABB;
+
+  --shelf-neutral: #141210;
+}

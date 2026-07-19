@@ -2,12 +2,20 @@ import * as notesApi from '@memoza/core/api/notes';
 import { ApiError } from '@memoza/core/api/client';
 import * as noteCrypto from '@memoza/core/crypto/note';
 import { requireSession } from '@memoza/core/crypto/session';
+import { getFormat } from '@memoza/core/views/controlTags';
 import { getDb } from './db';
 
 export type QueueOp =
   | { kind: 'create'; noteId: string; title_ct: string; body_ct: string; tags_ct: string | null; wrapped_cek: string }
-  | { kind: 'update'; noteId: string; title_ct: string; body_ct: string; tags_ct: string | null; base_rev: number }
-  | { kind: 'pin'; noteId: string; pinned: 0 | 1 }
+  | {
+      kind: 'update';
+      noteId: string;
+      title_ct: string;
+      body_ct: string;
+      tags_ct: string | null;
+      base_rev: number;
+      isPublic: boolean;
+    }
   | { kind: 'trash'; noteId: string }
   | { kind: 'restore'; noteId: string }
   | { kind: 'purge'; noteId: string }
@@ -66,9 +74,19 @@ async function forkConflictingUpdate(op: Extract<QueueOp, { kind: 'update' }>, c
   const tags = await noteCrypto.openTags(cek, op.noteId, op.tags_ct);
 
   await db.execute(
-    `UPDATE local_note SET title_ct = ?, body_ct = ?, tags_ct = ?, rev = ?, updated_at = ?, deleted_at = ?
+    `UPDATE local_note SET title_ct = ?, body_ct = ?, tags_ct = ?, rev = ?, updated_at = ?, deleted_at = ?, page_no = ?, is_public = ?
      WHERE id = ?`,
-    [conflictNote.title_ct, conflictNote.body_ct, conflictNote.tags_ct, conflictNote.rev, conflictNote.updated_at, conflictNote.deleted_at, op.noteId]
+    [
+      conflictNote.title_ct,
+      conflictNote.body_ct,
+      conflictNote.tags_ct,
+      conflictNote.rev,
+      conflictNote.updated_at,
+      conflictNote.deleted_at,
+      conflictNote.page_no,
+      conflictNote.is_public ? 1 : 0,
+      op.noteId,
+    ]
   );
 
   const newId = crypto.randomUUID();
@@ -86,29 +104,64 @@ async function forkConflictingUpdate(op: Extract<QueueOp, { kind: 'update' }>, c
   });
 
   await db.execute(
-    `INSERT INTO local_note (id, owner_id, title_ct, body_ct, tags_ct, wrapped_cek, wrap_method, pinned, rev, created_at, updated_at, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'dek', 0, ?, ?, ?, NULL)`,
-    [newId, session.userId, newTitleCt, newBodyCt, newTagsCt, newWrappedCek, created.rev, created.created_at, created.updated_at]
+    `INSERT INTO local_note (id, owner_id, title_ct, body_ct, tags_ct, wrapped_cek, wrap_method, has_unread_comment, page_no, is_public, rev, created_at, updated_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'dek', 0, ?, 0, ?, ?, ?, NULL)`,
+    [
+      newId,
+      session.userId,
+      newTitleCt,
+      newBodyCt,
+      newTagsCt,
+      newWrappedCek,
+      created.page_no,
+      created.rev,
+      created.created_at,
+      created.updated_at,
+    ]
   );
+}
+
+async function attachPublishedMirror(
+  noteId: string,
+  titleCt: string,
+  bodyCt: string,
+  tagsCt: string | null
+): Promise<{ title: string; body: string; format: string }> {
+  const session = requireSession();
+  const db = await getDb();
+  const rows = await db.select<{ wrapped_cek: string }[]>('SELECT wrapped_cek FROM local_note WHERE id = ?', [noteId]);
+  const wrappedCek = rows[0]?.wrapped_cek;
+  if (!wrappedCek) throw new Error('Note not loaded locally');
+
+  const cek = await noteCrypto.unwrapCekWithDek(session.dek, wrappedCek);
+  const title = await noteCrypto.openTitle(cek, noteId, titleCt);
+  const body = await noteCrypto.openBody(cek, noteId, bodyCt);
+  const tags = await noteCrypto.openTags(cek, noteId, tagsCt);
+  return { title, body, format: getFormat(tags) };
 }
 
 async function applyOp(op: QueueOp): Promise<void> {
   switch (op.kind) {
-    case 'create':
-      await notesApi.createNote(op.noteId, {
+    case 'create': {
+      const created = await notesApi.createNote(op.noteId, {
         title_ct: op.title_ct,
         body_ct: op.body_ct,
         tags_ct: op.tags_ct,
         wrapped_cek: op.wrapped_cek,
       });
+      const db = await getDb();
+      await db.execute('UPDATE local_note SET page_no = ? WHERE id = ?', [created.page_no, op.noteId]);
       return;
+    }
     case 'update':
       try {
+        const mirror = op.isPublic ? await attachPublishedMirror(op.noteId, op.title_ct, op.body_ct, op.tags_ct) : {};
         await notesApi.updateNote(op.noteId, {
           title_ct: op.title_ct,
           body_ct: op.body_ct,
           tags_ct: op.tags_ct,
           base_rev: op.base_rev,
+          ...mirror,
         });
       } catch (err) {
         if (err instanceof ApiError && err.status === 409 && err.body && typeof err.body === 'object' && 'note' in err.body) {
@@ -117,9 +170,6 @@ async function applyOp(op: QueueOp): Promise<void> {
         }
         throw err;
       }
-      return;
-    case 'pin':
-      await notesApi.setPinned(op.noteId, op.pinned);
       return;
     case 'trash':
       await notesApi.trashNote(op.noteId);

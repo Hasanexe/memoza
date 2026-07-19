@@ -23,10 +23,20 @@ export interface LoginResponse extends TokenResponse {
   kdf_iterations: number;
   wrapped_dek: string;
   wrapped_private_key: string;
+  username: string;
 }
 
-export function register(body: RegisterRequest): Promise<TokenResponse> {
+export function register(body: RegisterRequest): Promise<{ ok: true }> {
   return request('/auth/register', { method: 'POST', body: JSON.stringify(body) }, false);
+}
+
+export function checkUsernameAvailable(token: string, username: string): Promise<{ available: boolean }> {
+  const params = new URLSearchParams({ token, username });
+  return request(`/auth/username-available?${params.toString()}`, { method: 'GET' }, false);
+}
+
+export function activate(token: string, username: string): Promise<{ ok: true }> {
+  return request('/auth/activate', { method: 'POST', body: JSON.stringify({ token, username }) }, false);
 }
 
 export function login(email: string, password: string): Promise<LoginResponse> {

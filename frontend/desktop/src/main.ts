@@ -13,6 +13,8 @@ import {
   isBiometricEnabled,
 } from './unlock';
 import { wipeLocalStore } from './store/db';
+import { resolveDeepLink } from './deepLink';
+import { createPageShortcut, takePendingMmpUrl } from './shortcuts';
 
 const THEME_KEY = 'theme';
 const savedTheme = localStorage.getItem(THEME_KEY);
@@ -25,7 +27,7 @@ const store = createSqliteStore();
 const app = mountApp(root, store, {
   unlockProvider: biometricUnlockProvider,
   onUnlock: async session => {
-    await saveLocalAccount(session.userId, session.email, session.wrappedDek, session.wrappedPrivateKey);
+    await saveLocalAccount(session.userId, session.email, session.username, session.wrappedDek, session.wrappedPrivateKey);
   },
   onLogout: async () => {
     await clearLocalAccount();
@@ -36,6 +38,7 @@ const app = mountApp(root, store, {
     enable: password => enableBiometricUnlock(password, requireSession().email),
     disable: () => disableBiometricUnlock(),
   },
+  createShortcut: (pageNo, title) => createPageShortcut(pageNo, title),
 });
 
 async function syncAndRefresh(): Promise<void> {
@@ -52,12 +55,15 @@ window.addEventListener('online', () => void syncAndRefresh());
 
 void onOpenUrl(urls => {
   for (const url of urls) {
-    try {
-      const parsed = new URL(url);
-      const target = parsed.hash && parsed.hash.length > 1 ? parsed.hash : `#/reset${parsed.search}`;
+    void resolveDeepLink(store, url).then(target => {
       location.hash = target;
-    } catch {
-      continue;
-    }
+    });
   }
+});
+
+void takePendingMmpUrl().then(url => {
+  if (!url) return;
+  void resolveDeepLink(store, url).then(target => {
+    location.hash = target;
+  });
 });

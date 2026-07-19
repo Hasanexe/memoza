@@ -1,6 +1,7 @@
 export interface Session {
   userId: string;
   email: string;
+  username: string;
   dek: CryptoKey;
   privateKey: CryptoKey;
   wrappedDek: string;

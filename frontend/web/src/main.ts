@@ -7,11 +7,16 @@ const THEME_KEY = 'theme';
 const savedTheme = localStorage.getItem(THEME_KEY);
 if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
 
+if (!location.hash) {
+  const publicPage = /^\/([^/]+)\/([0-9]+)\/?$/.exec(location.pathname);
+  if (publicPage) location.hash = `#/${publicPage[1]}/${publicPage[2]}`;
+}
+
 const root = document.getElementById('app');
 if (!root) throw new Error('Missing #app root element');
 
 const store = createMemoryStore();
-const app = mountApp(root, store);
+const app = mountApp(root, store, { rememberEmail: false });
 
 async function syncAndRefresh(): Promise<void> {
   if (!isUnlocked()) return;

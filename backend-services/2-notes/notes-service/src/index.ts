@@ -4,10 +4,11 @@ import { handleList } from './handlers/list';
 import { handleGetNote } from './handlers/get-note';
 import { handlePutNote } from './handlers/put-note';
 import { handleTrashNote, handleRestoreNote, handlePurgeNote } from './handlers/trash';
-import { handleUpdateGrant } from './handlers/grant';
 import { handleShareNote, handleUnshareNote } from './handlers/share';
 import { handleListComments, handlePostComment, handleDeleteComment } from './handlers/comments';
 import { handlePurgeUser } from './handlers/internal-purge';
+import { handlePublishNote } from './handlers/publish';
+import { handleGetPublicPage } from './handlers/public-page';
 
 export default {
   async fetch(request: Request, env: NotesEnv): Promise<Response> {
@@ -16,6 +17,11 @@ export default {
 
     if (method === 'POST' && pathname === '/notes/internal/purge-user') {
       return handlePurgeUser(request, env);
+    }
+
+    const publicPageMatch = pathname.match(/^\/notes\/internal\/public\/([^/]+)\/([^/]+)$/);
+    if (method === 'GET' && publicPageMatch) {
+      return handleGetPublicPage(env, publicPageMatch[1], publicPageMatch[2]);
     }
 
     const userId = readUserId(request);
@@ -35,11 +41,6 @@ export default {
       return handlePurgeNote(env, userId, purgeMatch[1]);
     }
 
-    const grantMatch = pathname.match(/^\/notes\/([^/]+)\/grant$/);
-    if (method === 'PATCH' && grantMatch) {
-      return handleUpdateGrant(request, env, userId, grantMatch[1]);
-    }
-
     const unshareMatch = pathname.match(/^\/notes\/([^/]+)\/share\/([^/]+)$/);
     if (method === 'DELETE' && unshareMatch) {
       return handleUnshareNote(env, userId, unshareMatch[1], unshareMatch[2]);
@@ -48,6 +49,11 @@ export default {
     const shareMatch = pathname.match(/^\/notes\/([^/]+)\/share$/);
     if (method === 'POST' && shareMatch) {
       return handleShareNote(request, env, userId, shareMatch[1]);
+    }
+
+    const publishMatch = pathname.match(/^\/notes\/([^/]+)\/publish$/);
+    if (method === 'POST' && publishMatch) {
+      return handlePublishNote(request, env, userId, publishMatch[1]);
     }
 
     const commentMatch = pathname.match(/^\/notes\/([^/]+)\/comments\/([^/]+)$/);

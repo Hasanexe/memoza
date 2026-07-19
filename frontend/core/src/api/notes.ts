@@ -7,7 +7,9 @@ export interface NoteRow {
   tags_ct: string | null;
   wrapped_cek: string;
   wrap_method: 'dek' | 'pubkey';
-  pinned: 0 | 1;
+  has_unread_comment: boolean;
+  page_no: number | null;
+  is_public: boolean;
   rev: number;
   created_at: number;
   updated_at: number;
@@ -49,6 +51,7 @@ export interface CreateNoteResponse {
   rev: number;
   created_at: number;
   updated_at: number;
+  page_no: number;
 }
 
 export function createNote(id: string, body: CreateNoteRequest): Promise<CreateNoteResponse> {
@@ -60,6 +63,9 @@ export interface UpdateNoteRequest {
   body_ct: string;
   tags_ct: string | null;
   base_rev: number;
+  title?: string;
+  body?: string;
+  format?: string;
 }
 
 export interface UpdateNoteResponse {
@@ -83,10 +89,6 @@ export function purgeNote(id: string): Promise<{ ok: true }> {
   return request(`/notes/${id}/purge`, { method: 'DELETE' });
 }
 
-export function setPinned(id: string, pinned: 0 | 1): Promise<{ updated_at: number }> {
-  return request(`/notes/${id}/grant`, { method: 'PATCH', body: JSON.stringify({ pinned }) });
-}
-
 export function shareNote(id: string, recipientId: string, wrappedCek: string): Promise<{ ok: true }> {
   return request(`/notes/${id}/share`, {
     method: 'POST',
@@ -96,6 +98,26 @@ export function shareNote(id: string, recipientId: string, wrappedCek: string): 
 
 export function unshareNote(id: string, userId: string): Promise<{ ok: true }> {
   return request(`/notes/${id}/share/${userId}`, { method: 'DELETE' });
+}
+
+export interface PublishNoteRequest {
+  title: string;
+  body: string;
+  format: string;
+}
+
+export function publishNote(id: string, body: PublishNoteRequest): Promise<{ page_no: number }> {
+  return request(`/notes/${id}/publish`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export interface PublicPage {
+  title: string;
+  body: string;
+  format: string;
+}
+
+export function getPublicPage(username: string, pageNo: number): Promise<PublicPage> {
+  return request(`/public/${encodeURIComponent(username)}/${pageNo}`, { method: 'GET' }, false);
 }
 
 export interface CommentRow {

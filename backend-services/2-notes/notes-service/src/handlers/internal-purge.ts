@@ -29,6 +29,7 @@ export async function handlePurgeUser(request: Request, env: NotesEnv): Promise<
 
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM note_comment WHERE note_id IN (${placeholders})`).bind(...ids),
+      env.DB.prepare(`DELETE FROM public_page WHERE note_id IN (${placeholders})`).bind(...ids),
       env.DB.prepare(`UPDATE note_grant SET wrapped_cek = '', updated_at = ? WHERE note_id IN (${placeholders})`).bind(
         now,
         ...ids

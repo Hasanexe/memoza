@@ -1,11 +1,14 @@
 import { errors } from 'jose';
-import { verifyToken, handlePreflight, addCors } from '@memoza/shared';
+import { verifyToken, handlePreflight, addCors, withSecurityHeaders, isValidUsernameFormat } from '@memoza/shared';
 import type { AccessClaims, Role } from '@memoza/shared';
+
+const PUBLIC_PAGE_RE = /^\/public\/([^/]+)\/([^/]+)$/;
+const PAGE_NO_RE = /^\d+$/;
 
 interface GatewayEnv {
   JWT_PUBLIC_KEY: string;
   JWT_PUBLIC_KEY_PREVIOUS?: string;
-  FRONTEND_ORIGIN: string;
+  CORS_ALLOWED_ORIGINS: string;
   NOTES: Fetcher;
   AUTH: Fetcher;
 }
@@ -15,6 +18,10 @@ function json(body: object, status: number): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function respond(response: Response, request: Request, env: GatewayEnv, cacheControl: string): Response {
+  return addCors(withSecurityHeaders(response, cacheControl), request, env.CORS_ALLOWED_ORIGINS);
 }
 
 function checkRbac(_pathname: string, role: Role): boolean {
@@ -37,20 +44,48 @@ function identityHeaders(request: Request, claims: AccessClaims): Headers {
   return headers;
 }
 
+async function handlePublicPage(pathname: string, env: GatewayEnv): Promise<Response> {
+  const match = PUBLIC_PAGE_RE.exec(pathname);
+  if (!match) return json({ error: 'Not found' }, 404);
+
+  const [, username, pageNo] = match;
+  if (!isValidUsernameFormat(username) || !PAGE_NO_RE.test(pageNo)) {
+    return json({ error: 'Not found' }, 404);
+  }
+
+  const resolveResponse = await env.AUTH.fetch(
+    `http://internal/internal/auth/resolve-username?username=${encodeURIComponent(username)}`
+  );
+  if (!resolveResponse.ok) return json({ error: 'Not found' }, 404);
+  const { user_id } = (await resolveResponse.json()) as { user_id: string };
+
+  const pageResponse = await env.NOTES.fetch(
+    `http://internal/notes/internal/public/${encodeURIComponent(user_id)}/${pageNo}`
+  );
+  if (!pageResponse.ok) return json({ error: 'Not found' }, 404);
+  const page = (await pageResponse.json()) as { title: string; body: string; format: string };
+
+  return json({ title: page.title, body: page.body, format: page.format }, 200);
+}
+
 export default {
   async fetch(request: Request, env: GatewayEnv): Promise<Response> {
-    const preflight = handlePreflight(request, env.FRONTEND_ORIGIN, 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    const preflight = handlePreflight(request, env.CORS_ALLOWED_ORIGINS, 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     if (preflight) return preflight;
 
     const { pathname, search } = new URL(request.url);
 
     if (request.method === 'GET' && pathname === '/health') {
-      return addCors(json({ ok: true }, 200), request, env.FRONTEND_ORIGIN);
+      return respond(json({ ok: true }, 200), request, env, 'no-store');
+    }
+
+    if (request.method === 'GET' && pathname.startsWith('/public/')) {
+      return respond(await handlePublicPage(pathname, env), request, env, 'public, max-age=60');
     }
 
     const authHeader = request.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
-      return addCors(json({ error: 'Unauthorized' }, 401), request, env.FRONTEND_ORIGIN);
+      return respond(json({ error: 'Unauthorized' }, 401), request, env, 'no-store');
     }
     const token = authHeader.slice(7);
 
@@ -62,15 +97,11 @@ export default {
       );
     } catch (err: unknown) {
       const expired = err instanceof errors.JWTExpired;
-      return addCors(
-        json({ error: expired ? 'Token expired' : 'Unauthorized' }, 401),
-        request,
-        env.FRONTEND_ORIGIN
-      );
+      return respond(json({ error: expired ? 'Token expired' : 'Unauthorized' }, 401), request, env, 'no-store');
     }
 
     if (!checkRbac(pathname, claims.role)) {
-      return addCors(json({ error: 'Forbidden' }, 403), request, env.FRONTEND_ORIGIN);
+      return respond(json({ error: 'Forbidden' }, 403), request, env, 'no-store');
     }
 
     if (request.method === 'GET' && pathname === '/users/public-key') {
@@ -78,16 +109,16 @@ export default {
         method: 'GET',
         headers: identityHeaders(request, claims),
       });
-      return addCors(upstreamResponse, request, env.FRONTEND_ORIGIN);
+      return respond(upstreamResponse, request, env, 'no-store');
     }
 
     const upstream = resolveBinding(env, pathname);
     if (!upstream) {
-      return addCors(json({ error: 'Not found' }, 404), request, env.FRONTEND_ORIGIN);
+      return respond(json({ error: 'Not found' }, 404), request, env, 'no-store');
     }
 
     const forwardedRequest = new Request(request, { headers: identityHeaders(request, claims) });
     const upstreamResponse = await upstream.fetch(forwardedRequest);
-    return addCors(upstreamResponse, request, env.FRONTEND_ORIGIN);
+    return respond(upstreamResponse, request, env, 'no-store');
   },
 };

@@ -13,6 +13,14 @@ async function ensureMermaid(): Promise<MermaidModule> {
   return mermaidModule;
 }
 
+export async function renderContent(host: HTMLElement, source: string, format: 'md' | 'html'): Promise<void> {
+  if (format === 'html') {
+    host.innerHTML = DOMPurify.sanitize(source);
+    return;
+  }
+  await renderMarkdown(host, source);
+}
+
 export async function renderMarkdown(host: HTMLElement, source: string): Promise<void> {
   const rawHtml = await marked.parse(source);
   host.innerHTML = DOMPurify.sanitize(rawHtml);

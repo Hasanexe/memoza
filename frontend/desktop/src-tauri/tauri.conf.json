@@ -32,6 +32,14 @@
 			"icons/128x128.png",
 			"icons/icon.icns",
 			"icons/icon.ico"
+		],
+		"fileAssociations": [
+			{
+				"ext": ["mmp"],
+				"name": "Memoza Page",
+				"description": "Memoza page shortcut",
+				"role": "Viewer"
+			}
 		]
 	},
 	"plugins": {

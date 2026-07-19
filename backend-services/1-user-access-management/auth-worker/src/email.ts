@@ -21,12 +21,32 @@ async function sendEmail(
   }
 }
 
-export async function sendWelcome(
-  env: { RESEND_API_KEY: string; RESEND_FROM: string },
+export async function sendActivation(
+  env: { RESEND_API_KEY: string; RESEND_FROM: string; FRONTEND_ORIGIN: string },
   email: string,
-  name: string
+  name: string,
+  token: string
 ): Promise<void> {
-  await sendEmail(env, email, 'Welcome to Memoza', `<p>Hi ${name}, welcome to Memoza!</p>`);
+  const link = `${env.FRONTEND_ORIGIN}/#/activate?token=${encodeURIComponent(token)}`;
+  await sendEmail(
+    env,
+    email,
+    'Activate your Memoza account',
+    `<p>Hi ${name}, activate your account: <a href="${link}">${link}</a></p><p>This link expires soon and can only be used once.</p>`
+  );
+}
+
+export async function sendAlreadyRegistered(
+  env: { RESEND_API_KEY: string; RESEND_FROM: string; FRONTEND_ORIGIN: string },
+  email: string
+): Promise<void> {
+  const link = `${env.FRONTEND_ORIGIN}/#/reset`;
+  await sendEmail(
+    env,
+    email,
+    'You already have a Memoza account',
+    `<p>You already have an account with this email. <a href="${link}">Forgot your password?</a></p>`
+  );
 }
 
 export async function sendPasswordReset(

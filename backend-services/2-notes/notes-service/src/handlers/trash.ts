@@ -73,18 +73,20 @@ export async function handlePurgeNote(env: NotesEnv, userId: string, noteId: str
   if (state.purged_at !== null) return json({ ok: true }, 200);
 
   const now = Date.now();
-  const result = await env.DB.prepare(
-    `UPDATE note SET title_ct = '', body_ct = '', tags_ct = NULL, purged_at = ?, updated_at = ?
-     WHERE id = ? AND owner_id = ? AND purged_at IS NULL`
-  )
-    .bind(now, now, noteId, userId)
-    .run();
-
-  if (result.meta.changes > 0) {
-    await env.DB.prepare(`UPDATE note_grant SET wrapped_cek = '', updated_at = ? WHERE note_id = ?`)
-      .bind(now, noteId)
-      .run();
-  }
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE note SET title_ct = '', body_ct = '', tags_ct = NULL, purged_at = ?, updated_at = ?
+       WHERE id = ? AND owner_id = ? AND purged_at IS NULL`
+    ).bind(now, now, noteId, userId),
+    env.DB.prepare(
+      `UPDATE note_grant SET wrapped_cek = '', updated_at = ? WHERE note_id = ?
+       AND EXISTS (SELECT 1 FROM note WHERE id = ? AND purged_at = ?)`
+    ).bind(now, noteId, noteId, now),
+    env.DB.prepare(
+      `DELETE FROM public_page WHERE owner_id = ? AND note_id = ?
+       AND EXISTS (SELECT 1 FROM note WHERE id = ? AND purged_at = ?)`
+    ).bind(userId, noteId, noteId, now),
+  ]);
 
   return json({ ok: true }, 200);
 }

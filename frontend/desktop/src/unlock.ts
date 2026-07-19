@@ -13,6 +13,7 @@ const KDF_ITERATIONS = 600000;
 interface LocalAccountRow {
   user_id: string;
   email: string;
+  username: string;
   wrapped_dek: string;
   wrapped_private_key: string;
   biometric_enabled: number;
@@ -21,17 +22,18 @@ interface LocalAccountRow {
 export async function saveLocalAccount(
   userId: string,
   email: string,
+  username: string,
   wrappedDek: string,
   wrappedPrivateKey: string
 ): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `INSERT INTO local_account (id, user_id, email, wrapped_dek, wrapped_private_key, biometric_enabled)
-     VALUES (1, ?, ?, ?, ?, 0)
+    `INSERT INTO local_account (id, user_id, email, username, wrapped_dek, wrapped_private_key, biometric_enabled)
+     VALUES (1, ?, ?, ?, ?, ?, 0)
      ON CONFLICT (id) DO UPDATE SET
-       user_id = excluded.user_id, email = excluded.email,
+       user_id = excluded.user_id, email = excluded.email, username = excluded.username,
        wrapped_dek = excluded.wrapped_dek, wrapped_private_key = excluded.wrapped_private_key`,
-    [userId, email, wrappedDek, wrappedPrivateKey]
+    [userId, email, username, wrappedDek, wrappedPrivateKey]
   );
 }
 
@@ -86,6 +88,7 @@ export const biometricUnlockProvider: UnlockProvider = {
     setSession({
       userId: account.user_id,
       email: account.email,
+      username: account.username,
       dek,
       privateKey,
       wrappedDek: account.wrapped_dek,

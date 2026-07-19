@@ -1,5 +1,6 @@
-import { h, clear, errorBanner, infoBanner } from './dom';
+import { h, clear, errorBanner, infoBanner, icon } from './dom';
 import type { AppContext } from './app';
+import { renderSidebar } from './sidebar';
 import * as authApi from '../api/auth';
 import { ApiError } from '../api/client';
 import {
@@ -21,21 +22,34 @@ export function renderSettings(ctx: AppContext): void {
   clear(root);
   const session = requireSession();
 
-  const backBtn = h('button', { type: 'button' }, 'Back');
+  const backBtn = h(
+    'button',
+    { type: 'button', class: 'icon-btn', 'aria-label': 'Back to notes', title: 'Back to notes' },
+    icon('chevronLeft')
+  );
   backBtn.addEventListener('click', () => navigate('/'));
 
   root.append(
     h(
       'div',
-      { class: 'settings-view' },
-      backBtn,
-      h('h1', {}, 'Settings'),
-      renderThemeSection(),
-      renderPasswordSection(),
-      ctx.biometricControl ? renderBiometricSection(ctx.biometricControl) : null,
-      renderExportSection(),
-      renderImportSection(),
-      renderDeleteSection()
+      { class: 'app-shell' },
+      renderSidebar(ctx, 'settings'),
+      h(
+        'div',
+        { class: 'main' },
+        h(
+          'div',
+          { class: 'main-inner settings-view' },
+          backBtn,
+          h('h1', {}, 'Settings'),
+          renderThemeSection(),
+          renderPasswordSection(),
+          ctx.biometricControl ? renderBiometricSection(ctx.biometricControl) : null,
+          renderExportSection(),
+          renderImportSection(),
+          renderDeleteSection()
+        )
+      )
     )
   );
 
@@ -69,7 +83,7 @@ export function renderSettings(ctx: AppContext): void {
     }) as HTMLInputElement;
     const confirmInput = h('input', { type: 'password', autocomplete: 'new-password' }) as HTMLInputElement;
     const statusHost = h('div', {});
-    const submitBtn = h('button', { type: 'button' }, 'Change password');
+    const submitBtn = h('button', { type: 'button', class: 'primary' }, 'Change password');
 
     submitBtn.addEventListener('click', async () => {
       clear(statusHost);
@@ -103,6 +117,7 @@ export function renderSettings(ctx: AppContext): void {
         setSession({
           userId,
           email: session.email,
+          username: session.username,
           dek: sessionDek,
           privateKey: sessionPrivateKey,
           wrappedDek: envelope.wrappedDek,
@@ -111,6 +126,7 @@ export function renderSettings(ctx: AppContext): void {
         await ctx.onUnlock?.({
           userId,
           email: session.email,
+          username: session.username,
           wrappedDek: envelope.wrappedDek,
           wrappedPrivateKey: envelope.wrappedPrivateKey,
         });
@@ -140,7 +156,7 @@ export function renderSettings(ctx: AppContext): void {
   function renderBiometricSection(control: NonNullable<AppContext['biometricControl']>): HTMLElement {
     const passwordInput = h('input', { type: 'password', placeholder: 'Current password' }) as HTMLInputElement;
     const statusHost = h('div', {});
-    const enableBtn = h('button', { type: 'button' }, 'Enable');
+    const enableBtn = h('button', { type: 'button', class: 'primary' }, 'Enable');
     const disableBtn = h('button', { type: 'button', class: 'hidden' }, 'Disable');
 
     void control.isEnabled().then(enabled => {
@@ -193,7 +209,7 @@ export function renderSettings(ctx: AppContext): void {
 
   function renderExportSection(): HTMLElement {
     const statusHost = h('div', {});
-    const btn = h('button', { type: 'button' }, 'Export all notes (.md)');
+    const btn = h('button', { type: 'button', class: 'primary' }, 'Export all notes (.md)');
     btn.addEventListener('click', async () => {
       clear(statusHost);
       const summaries = (await store.listNotes()).filter(n => n.deletedAt === null);
@@ -211,7 +227,7 @@ export function renderSettings(ctx: AppContext): void {
   function renderImportSection(): HTMLElement {
     const fileInput = h('input', { type: 'file', accept: '.md', multiple: 'true' }) as HTMLInputElement;
     const statusHost = h('div', {});
-    const btn = h('button', { type: 'button' }, 'Import');
+    const btn = h('button', { type: 'button', class: 'primary' }, 'Import');
     btn.addEventListener('click', async () => {
       clear(statusHost);
       const files = fileInput.files;

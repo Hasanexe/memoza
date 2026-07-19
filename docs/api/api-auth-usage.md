@@ -54,9 +54,44 @@ recovery key) or `"convenient"` (email-only reset, weaker — see below). In
 `convenient` mode also send `escrowed_recovery`: the recovery key encrypted to
 the published `ESCROW_PUBLIC_KEY` (RSA-OAEP). In `private` mode omit it.
 
-`201` → `{ "access_token": "…", "token_type": "Bearer" }` and a
-`Set-Cookie: __Secure-refresh_token`. Then show the recovery key once.
-Errors: `400` (validation), `409` (email already registered).
+**The response is always `202`** with a generic "check your email" message —
+whether or not the email already has an account (no enumeration). No tokens
+are returned; the account can't log in until it's activated via the emailed
+link. Show the recovery key once right after this call — it was generated
+client-side and this is the only moment it exists. Then show a "check your
+email to activate" screen. `400` only for validation errors.
+
+There is **no username field** — the username is picked at activation (below).
+
+## `GET /auth/username-available?username=<username>&token=<activation token>`
+
+Called from the **activation screen** (debounced ~300–500ms after the user
+stops typing) while they're picking their username. Requires the activation
+token from the emailed link — there's no JWT yet, and the token is what makes
+this endpoint non-public.
+
+`200` → `{ "available": true }` or `{ "available": false }`. The answer is
+deliberately generic: `false` never says whether the name is taken, reserved,
+or retired. `400`/`401` for a missing/invalid/expired token. This is a UX
+convenience, not the authoritative check — `POST /auth/activate` can still
+`409` after this said `true` (someone grabbed it in between).
+
+## `POST /auth/activate`
+
+Request: `{ "token": "<from the email link>", "username": "ada" }`.
+
+**`username` is permanent — there is no rename endpoint.** Format: 3–32
+characters, lowercase `a-z`, `0-9`, and `-` (no leading/trailing hyphen);
+lowercase it client-side before sending — comparisons are case-insensitive
+(`Ada` = `ada`). It's your public handle for page links
+(`app.memoza.io/<username>/<page_no>`) and shortcuts; it plays no role in
+login or key derivation (that's still email — see
+`docs/architecture/1-user-access-management/README.md`'s "Username" section).
+
+`200` → account activated; send the user to the login screen (activation
+never grants a session — logging in still needs the password). `409` →
+username not available, pick another (the token stays valid). `400` →
+invalid/expired token (re-register to get a fresh link).
 
 ## `POST /auth/login`
 
@@ -70,15 +105,25 @@ Request: `{ "email": "…", "password": "<authHash>" }`.
   "token_type": "Bearer",
   "kdf_iterations": 600000,
   "wrapped_dek": "<base64>",
-  "wrapped_private_key": "<base64>"
+  "wrapped_private_key": "<base64>",
+  "username": "ada"
 }
 ```
+
+`username` is the account's permanent public handle (set at activation); cache it in
+the client session alongside `email` — it's what builds a published page's
+shareable link (`app.memoza.io/<username>/<page_no>`, see `api-notes-usage.md`'s
+"Pages & public sharing").
 
 Unwrap `dek` and `privateKey` with `wrapKey` and hold them only in an in-memory
 session module (never `localStorage`/`sessionStorage`/IndexedDB — see
 `SECURITY-RULES.md`'s ban on raw key bytes in web storage). They live only for
 the tab's lifetime.
 `401` → `{ "error": "Invalid credentials" }` (generic — no enumeration).
+`403` → `{ "error": "Not activated" }` — correct credentials on an account
+that hasn't used its activation link yet; show a "check your email to
+activate" message (this leaks nothing: the caller already proved they hold
+the password).
 
 ## `POST /auth/refresh`
 

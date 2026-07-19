@@ -88,6 +88,7 @@ export async function handlePostComment(
       now,
       noteId
     ),
+    env.DB.prepare('UPDATE note SET last_comment_at = ? WHERE id = ?').bind(now, noteId),
   ]);
 
   return json({ id, author_id: userId, body_ct, created_at: now }, 201);

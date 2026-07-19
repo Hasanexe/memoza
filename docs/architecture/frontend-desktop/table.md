@@ -20,8 +20,10 @@ see.
 | `title_ct`, `body_ct`, `tags_ct` | TEXT | Same ciphertext as the server; `tags_ct` nullable |
 | `wrapped_cek` | TEXT | This user's grant |
 | `wrap_method` | TEXT | `dek` / `pubkey` |
-| `pinned` | INTEGER | This user's pin |
-| `rev` | INTEGER | Used to skip re-fetching the body when only the grant changed (e.g. a pin) |
+| `has_unread_comment` | INTEGER | Mirrors the server's derived flag; pin is just the tag `"pin"` inside `tags_ct`, no separate column |
+| `page_no` | INTEGER, nullable | Permanent per-owner page number; `NULL` until a queued `create` op drains and the server assigns one. Mirrors the server's `note.page_no` |
+| `is_public` | INTEGER | Mirrors `note.is_public`; when `1`, the write queue attaches the plaintext mirror fields to a drained `update` op (see `write_queue`) |
+| `rev` | INTEGER | Used to skip re-fetching the body when only the grant changed (e.g. a comment's unread state) |
 | `created_at`, `updated_at`, `deleted_at` | INTEGER | Mirrors the server row |
 
 ## `local_comment`
@@ -58,9 +60,9 @@ restarts and offline periods.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | TEXT PK | Queue entry id (not a note/comment id) |
-| `kind` | TEXT | `create` / `update` / `pin` / `trash` / `restore` / `purge` / `share` / `unshare` / `comment` / `deleteComment` |
+| `kind` | TEXT | `create` / `update` / `trash` / `restore` / `purge` / `share` / `unshare` / `comment` / `deleteComment` |
 | `note_id` | TEXT | Nullable (present for all current kinds) |
-| `payload_json` | TEXT | The operation's ciphertext/args — never plaintext |
+| `payload_json` | TEXT | The operation's ciphertext/args — never plaintext. An `update` op also carries `isPublic`; if true, `applyOp` decrypts the queued ciphertext with the note's `cek` **at drain time** and attaches the plaintext mirror fields `{title, body, format}` to the outbound `PUT` — plaintext is never written into this column |
 | `created_at` | INTEGER | FIFO order |
 | `attempts` | INTEGER | Incremented on failure; draining stops after any failure (retried next drain) |
 | `last_error` | TEXT | Last failure message, for diagnostics only — never logs secrets |
@@ -74,7 +76,7 @@ on a fresh launch).
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PK | Always `1` |
-| `user_id`, `email` | TEXT | |
+| `user_id`, `email`, `username` | TEXT | |
 | `wrapped_dek`, `wrapped_private_key` | TEXT | Ciphertext, opaque — **not** key material |
 | `biometric_enabled` | INTEGER | Whether `enableBiometricUnlock` has sealed a wrap-key secret in the OS keystore |
 

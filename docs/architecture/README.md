@@ -1,11 +1,14 @@
 # Memoza — System Overview
 
-Memoza is a cross-platform note-taking app. Notes are plain Markdown (with
-Mermaid diagram support), and the product competes on **simplicity,
-performance, and privacy**: every note is end-to-end encrypted, so the server —
-and its admins — can never read note content. Notes can be **shared between
-Memoza users** while staying encrypted end-to-end (no plaintext on the server,
-ever).
+Memoza is a cross-platform note-taking app, organized as a **notebook**:
+every note is also a permanently-numbered **page**. Notes are plain Markdown
+(with Mermaid diagram support, and optional HTML), and the product competes on
+**simplicity, performance, and privacy**: every note is end-to-end encrypted,
+so the server — and its admins — can never read note content. Notes can be
+**shared between Memoza users** while staying encrypted end-to-end (no
+plaintext on the server, ever) — **with one deliberate, opt-in exception**: a
+user may **publish** a page for anonymous public reading, which stores that
+one page as plaintext (see the crypto spec's "Public pages" below).
 
 - Product domain: `memoza.io`
 - API host: `api.memoza.io` (Cloudflare Workers)
@@ -18,8 +21,9 @@ ever).
 
 | Module | Deployed name(s) | Responsibility |
 |---|---|---|
-| `1-user-access-management` | `memoza-auth`, `memoza-gateway` | Accounts, JWTs, refresh tokens, key envelopes (DEK + user keypair), password reset, account deletion, public-key lookup; gateway verifies JWTs and routes to services |
-| `2-notes` | `memoza-notes` | Encrypted notes, per-note key grants, read-only sharing, comments, shared tags, delta sync, trash |
+| `1-user-access-management` | `memoza-auth`, `memoza-gateway` | Accounts, JWTs, refresh tokens, key envelopes (DEK + user keypair), password reset, account deletion, public-key lookup, permanent username handles; gateway verifies JWTs and routes to services (and composes the unauthenticated public-page read) |
+| `2-notes` | `memoza-notes` | Encrypted notes, per-note key grants, read-only sharing, comments, shared tags, delta sync, trash, permanent page numbers, opt-in public page publishing |
+| `3-subscriptions` | `memoza-billing` (planned) | Mobile in-app subscriptions (Apple/Google), server-verified with store notifications — see `docs/architecture/3-subscriptions/README.md` |
 | `frontend/web` | app.memoza.io | Online-only UI, all cryptography, Markdown + Mermaid rendering, client-side search over title/tags |
 | `frontend/desktop` | Tauri shell | Implemented scaffold — reuses the web crypto/api/store core; adds an offline-first local store and OS-keystore unlock |
 
@@ -27,7 +31,10 @@ Routing on `api.memoza.io` is split by path: `/auth/*` → `memoza-auth`,
 everything else → `memoza-gateway`, which forwards `/notes/*` to `memoza-notes`
 over a service binding and handles the authenticated public-key lookup.
 `memoza-notes` has no public route and trusts identity only from the
-gateway-set `X-User-Id` header.
+gateway-set `X-User-Id` header — except that the gateway also answers
+`GET /public/{username}/{page_no}` **unauthenticated** (like `/health`),
+composing a username→user_id lookup in `memoza-auth` with a plaintext page
+read in `memoza-notes` to serve a published page to anonymous visitors.
 
 ## End-to-end encryption — canonical spec
 
@@ -110,10 +117,11 @@ sync.
 
 ### Per-user note metadata
 
-The only **per-user** view of a note is `pinned` (a non-sensitive plaintext
-flag on the grant); everything else about a note — content, tags — is shared. On
-the client, "My notes" vs "Shared with me" and tag filters give each user their
-own organization without per-user server state.
+The only **per-user** view of a note is `last_viewed_at` on the grant (drives
+the unread-comment indicator; non-sensitive plaintext timestamp); everything
+else about a note — content, tags, including the pin state (the tag `"pin"`)
+— is shared. On the client, "My notes" vs "Shared with me" and tag filters
+give each user their own organization without per-user server state.
 
 ### Account recovery & password reset (per-user mode)
 
@@ -166,9 +174,53 @@ deletes it. Notes are never touched either way.
 ### Server-visible metadata (accepted leak)
 
 Note id, owner id, timestamps, revision, ciphertext sizes, participant user ids
-(from grants), per-user `pinned` flag, and per-comment author id / timestamp /
-size. No note content, tag values, or comment text are visible. Search runs
-client-side over decrypted data — there is no server-side content index.
+(from grants), per-user `last_viewed_at` and the derived `has_unread_comment`
+flag, per-comment author id / timestamp / size, and each owned note's `page_no`
+(a per-owner sequence position, server-assigned — see the notes service design).
+No note content, tag values (including the pin state and every other control
+tag), or comment text are visible. Search runs client-side over decrypted data
+— there is no server-side content index. The one exception is **published**
+pages: for those, the plaintext title/body and the `format` value are
+server-visible by definition (see "Public pages"); tags and comments stay
+encrypted even then.
+
+### Public pages (deliberate plaintext exception)
+
+Everything above assumes the server only ever sees ciphertext. **Publishing a
+page is the one deliberate exception**, and it's opt-in and explicit per page:
+
+- The owner's client already holds the decrypted title/body (it has the
+  `cek`), so "make public" just decrypts locally and uploads that plaintext —
+  no key ever needs to reach an anonymous reader, and no key-in-URL scheme is
+  needed. The **encrypted note stays the private source of truth**; the public
+  copy is a separate, derived publication (the notes service's `public_page`
+  row — see `docs/architecture/2-notes/README.md`).
+- **Irreversible in effect, not just policy**: once plaintext has been served
+  to any reader, it may already be cached/saved outside Memoza's control —
+  there's no cryptographic way to claw it back. Consequently there is **no
+  unpublish**; the only way to stop serving a page is to delete it (trash hides
+  it, purge removes the `public_page` row for good), matching the UI warning
+  shown before a user publishes. Public pages are served through a short edge
+  cache (≤ 60 s TTL — quota/DoS protection, see `CLOUDFLARE-HARDENING.txt`),
+  so "trash stops serving" means "within the cache TTL", not instantly.
+- **Live mirror — the client re-uploads the plaintext on every edit**: the
+  server cannot decrypt `title_ct`/`body_ct`, so once a note is published,
+  every owner `PUT` update must carry plaintext `{title, body, format}`
+  alongside the ciphertext fields and the server re-writes the public copy
+  from them. A published-note update **without** the plaintext fields is
+  rejected (`400`) so the mirror can never silently go stale; plaintext fields
+  on an **unpublished** note are also rejected (`400`) so plaintext can never
+  arrive for a private page. **Tags are never part of the plaintext** — they
+  stay encrypted and unserved even on a published page. The public copy
+  therefore always matches the current content until the page is deleted.
+  There is no frozen-snapshot mode.
+- The public URL (`https://app.memoza.io/<username>/<page_no>`) resolves
+  through an **unauthenticated** route that spans two services — username →
+  user id in `memoza-auth`, then page content in `memoza-notes` — composed by
+  the gateway. See the notes and auth service designs for the endpoints.
+- **This is the one path where "not even admins can read your notes" is
+  knowingly false** — for that specific page, once published. The UI must say
+  so in plain language before the user confirms.
 
 ### Consequences (accepted)
 
@@ -187,6 +239,9 @@ client-side over decrypted data — there is no server-side content index.
   content or comments under that `cek`). True revocation would require rotating
   the `cek` and re-wrapping for remaining participants — out of scope for MVP
   (documented, not built).
+- **Publishing a page is a deliberate, opt-in plaintext exception** to the
+  whole model above, scoped to exactly the pages an owner chooses to publish —
+  see "Public pages" above.
 - Password strength **cannot** be enforced server-side (it never sees the
   password), so the client owns the only rule — **minimum 10 characters** — and
   the server just guards that the `authHash` field is a non-empty string within a
@@ -199,7 +254,14 @@ client-side over decrypted data — there is no server-side content index.
 - **Register**: client derives `authHash`, generates `dek`, `keypair`, and
   `recoveryKey`; sends `email, name, password = authHash, kdf_iterations,
   public_key, wrapped_dek, wrapped_private_key, wrapped_dek_recovery,
-  wrapped_private_key_recovery`; shows the recovery key once.
+  wrapped_private_key_recovery`; shows the recovery key once. The response is
+  **always a generic 202 "check your email"** (new email → activation link;
+  existing email → a "you already have an account" mail) so registration
+  leaks no account existence. The account stays **inactive** (login refused)
+  until the emailed activation link is used — and the activation step is
+  where the user picks their permanent public `username` (page links,
+  sharing). `username` never participates in login or key derivation, only
+  `email` does. See the auth service design for the activation flow.
 - **Login**: client derives `authHash`, posts it; response includes tokens plus
   `wrapped_dek`, `wrapped_private_key`, `kdf_iterations`; client unwraps both.
 - **Create note**: client generates a `cek`, encrypts title/body/tags, wraps
@@ -230,9 +292,10 @@ client-side over decrypted data — there is no server-side content index.
 
 ## Principles
 
-- Simplicity beats features: Markdown notes, pin, trash, shared tags,
-  client-side search, read-only sharing, and comments — nothing speculative. No
-  folders, no rich-text editor, no attachments, no note-version history in v1.
+- Simplicity beats features: Markdown (+ optional HTML) notes, pin, trash,
+  shared tags, client-side search, read-only sharing, comments, permanent page
+  numbers, and opt-in public publishing — nothing speculative. No folders, no
+  rich-text editor, no attachments, no note-version history in v1.
 - The **web** client is online-only (memory-only keys and data); **offline-first
   and OS-keystore unlock are the Tauri desktop/mobile shell's job**, reusing the
   same crypto/api/store core.
@@ -247,6 +310,8 @@ client-side over decrypted data — there is no server-side content index.
 |---|---|
 | Auth + gateway design | `docs/architecture/1-user-access-management/README.md` + `table.md` + `variables.md` |
 | Notes service design | `docs/architecture/2-notes/README.md` + `table.md` + `variables.md` |
+| Subscriptions design (planned) | `docs/architecture/3-subscriptions/README.md` + `table.md` + `variables.md` |
+| Cloudflare-dashboard hardening checklist | `CLOUDFLARE-HARDENING.txt` (repo root — panel-only items, not code) |
 | Shared frontend core design (`crypto`/`api`/`store`/`views`) | `docs/architecture/frontend-core/README.md` + `table.md` |
 | Web frontend design | `docs/architecture/frontend-web/README.md` + `table.md` + `variables.md` |
 | Desktop/mobile (Tauri) design | `docs/architecture/frontend-desktop/README.md` + `table.md` + `variables.md` |
