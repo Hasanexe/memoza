@@ -56,6 +56,7 @@ export type IconName =
   | 'plus'
   | 'chevronLeft'
   | 'chevronRight'
+  | 'chevronsLeft'
   | 'share'
   | 'pin'
   | 'trash'
@@ -71,7 +72,8 @@ export type IconName =
   | 'heading'
   | 'list'
   | 'checkbox'
-  | 'code';
+  | 'code'
+  | 'logout';
 
 const ICON_SHAPES: Record<IconName, () => SVGElement[]> = {
   plus: () => [
@@ -80,6 +82,10 @@ const ICON_SHAPES: Record<IconName, () => SVGElement[]> = {
   ],
   chevronLeft: () => [svgShape('polyline', { points: '15 18 9 12 15 6' })],
   chevronRight: () => [svgShape('polyline', { points: '9 18 15 12 9 6' })],
+  chevronsLeft: () => [
+    svgShape('polyline', { points: '18 17 13 12 18 7' }),
+    svgShape('polyline', { points: '11 17 6 12 11 7' }),
+  ],
   share: () => [
     svgShape('circle', { cx: '18', cy: '5', r: '3' }),
     svgShape('circle', { cx: '6', cy: '12', r: '3' }),
@@ -162,6 +168,11 @@ const ICON_SHAPES: Record<IconName, () => SVGElement[]> = {
   code: () => [
     svgShape('polyline', { points: '16 18 22 12 16 6' }),
     svgShape('polyline', { points: '8 6 2 12 8 18' }),
+  ],
+  logout: () => [
+    svgShape('path', { d: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4' }),
+    svgShape('polyline', { points: '16 17 21 12 16 7' }),
+    svgShape('line', { x1: '21', y1: '12', x2: '9', y2: '12' }),
   ],
 };
 

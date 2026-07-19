@@ -9,6 +9,7 @@ export type NotePanelSection = 'mine' | 'shared' | 'trash';
 
 export interface NotePanel {
   root: HTMLElement;
+  search: HTMLInputElement;
   mount(host: HTMLElement): void;
   setSection(section: NotePanelSection): void;
   setOpenNote(id: string | null): void;
@@ -300,5 +301,5 @@ export function createNotePanel(ctx: AppContext): NotePanel {
 
   void loadAndSync();
 
-  return { root, mount, setSection, setOpenNote, refresh };
+  return { root, search: searchInput, mount, setSection, setOpenNote, refresh };
 }

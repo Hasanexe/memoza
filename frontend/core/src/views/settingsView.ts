@@ -13,6 +13,7 @@ import {
 import { requireSession, logout as clearSession, setSession, setAccessToken } from '../crypto/session';
 import { decodeAccessToken } from '../crypto/jwt';
 import { KDF_ITERATIONS, MIN_PASSWORD_LENGTH, EMAIL_STORAGE_KEY } from '../config';
+import { performLogout } from './authViews';
 
 const THEME_KEY = 'theme';
 
@@ -35,6 +36,7 @@ export function renderSettings(ctx: AppContext): void {
       { class: 'main-inner settings-view' },
       backBtn,
       h('h1', {}, 'Settings'),
+      renderAccountSection(),
       renderThemeSection(),
       renderPasswordSection(),
       ctx.biometricControl ? renderBiometricSection(ctx.biometricControl) : null,
@@ -43,6 +45,12 @@ export function renderSettings(ctx: AppContext): void {
       renderDeleteSection()
     )
   );
+
+  function renderAccountSection(): HTMLElement {
+    const logoutBtn = h('button', { type: 'button', class: 'ghost' }, 'Log out');
+    logoutBtn.addEventListener('click', () => performLogout(ctx));
+    return h('section', {}, h('h2', {}, 'Account'), h('p', {}, session.email), logoutBtn);
+  }
 
   function renderThemeSection(): HTMLElement {
     const select = h(

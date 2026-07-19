@@ -77,8 +77,8 @@ function renderMarkdownToolbar(bodyArea: HTMLTextAreaElement): HTMLElement {
 function backLink(navigate: (path: string) => void, section: SidebarSection): HTMLElement {
   const link = h(
     'button',
-    { type: 'button', class: 'icon-btn back-link', 'aria-label': 'Back to notes', title: 'Back to notes' },
-    icon('chevronLeft')
+    { type: 'button', class: 'icon-btn ghost back-link', 'aria-label': 'Back to notes', title: 'Back to notes' },
+    icon('chevronsLeft')
   );
   link.addEventListener('click', () => navigate(section === 'shared' ? '/shared' : '/'));
   return link;
@@ -206,7 +206,7 @@ function renderEditorForm(
       pageStatus.textContent = '';
     });
 
-    pageBarHost.append(prevBtn, h('span', { class: 'page-bar-label' }, 'Page'), pageInput, nextBtn, pageStatus);
+    pageBarHost.append(h('span', { class: 'page-bar-label' }, 'Page'), prevBtn, pageInput, nextBtn, pageStatus);
   }
 
   function refreshPublicBadge(): void {
@@ -486,13 +486,19 @@ function renderEditorForm(
     updateCommentOfflineState();
   }
 
+  const toolbarRow = h(
+    'div',
+    { class: 'editor-toolbar' },
+    backLink(navigate, section),
+    pageBarHost,
+    h('div', { class: 'editor-toolbar-actions' }, previewToggle, shareBtn, shortcutBtn, deleteBtn, statusHost)
+  );
+
   const content = h(
     'div',
     { class: 'editor-view' },
-    backLink(navigate, section),
-    pageBarHost,
+    toolbarRow,
     publicBadgeHost,
-    h('div', { class: 'editor-toolbar' }, previewToggle, shareBtn, shortcutBtn, deleteBtn, statusHost),
     readOnly ? h('p', { class: 'readonly-notice' }, 'Shared with you — read only. You can still comment.') : null,
     titleInput,
     tagsEditor.el,

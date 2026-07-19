@@ -12,7 +12,7 @@ import { renderList } from './listView';
 import { renderEditor } from './editorView';
 import { renderSettings } from './settingsView';
 import { renderPublicReader } from './publicReaderView';
-import { clear, h } from './dom';
+import { clear, h, icon } from './dom';
 import { renderSidebar, type SidebarSection, type SidebarChrome } from './sidebar';
 import { createNotePanel, type NotePanel, type NotePanelSection } from './notePanel';
 import { EMAIL_STORAGE_KEY } from '../config';
@@ -26,7 +26,6 @@ export interface UnlockProvider {
 
 export interface ShellHandle {
   main: HTMLElement;
-  panelInMain: boolean;
   setSection(section: SidebarSection): void;
   setOpenNote(id: string | null): void;
 }
@@ -43,7 +42,7 @@ export interface AppContext {
   root: HTMLElement;
   store: Store;
   navigate: (path: string) => void;
-  ensureShell: (section: SidebarSection, openNoteId: string | null, showListInMain?: boolean) => ShellHandle;
+  ensureShell: (section: SidebarSection, openNoteId: string | null) => ShellHandle;
   unlockProvider?: UnlockProvider;
   onUnlock?: (session: LocalAccountSnapshot) => void | Promise<void>;
   onLogout?: () => void | Promise<void>;
@@ -74,14 +73,51 @@ export interface MountOptions {
   localAccount?: AppContext['localAccount'];
 }
 
+const MAIN_TOP_BAR_ITEMS: { key: SidebarSection; label: string; iconName: Parameters<typeof icon>[0]; path: string }[] = [
+  { key: 'mine', label: 'My notes', iconName: 'notebook', path: '/' },
+  { key: 'shared', label: 'Shared with me', iconName: 'users', path: '/shared' },
+  { key: 'trash', label: 'Trash', iconName: 'trash', path: '/trash' },
+  { key: 'settings', label: 'Settings', iconName: 'settings', path: '/settings' },
+];
+
 interface Shell {
   el: HTMLElement;
   main: HTMLElement;
   sidebar: SidebarChrome;
-  panel: NotePanel;
+  sidebarPanel: NotePanel;
+  mainPanel: NotePanel;
+  mainTopBar: HTMLElement;
+  setMainTopBarActive: (section: SidebarSection) => void;
   activeNav: SidebarSection;
-  showListInMain: boolean;
-  mobileQuery: MediaQueryList;
+}
+
+function buildMainTopBar(ctx: AppContext): { el: HTMLElement; setActive: (section: SidebarSection) => void } {
+  const buttons = new Map<SidebarSection, HTMLButtonElement>();
+  const newBtn = h(
+    'button',
+    { type: 'button', class: 'primary icon-btn', 'aria-label': 'New page', title: 'New page' },
+    icon('plus')
+  );
+  newBtn.addEventListener('click', () => ctx.navigate('/note/new'));
+
+  const items = MAIN_TOP_BAR_ITEMS.map(item => {
+    const btn = h(
+      'button',
+      { type: 'button', class: 'icon-btn ghost main-topbar-link', 'aria-label': item.label, title: item.label },
+      icon(item.iconName)
+    ) as HTMLButtonElement;
+    btn.addEventListener('click', () => ctx.navigate(item.path));
+    buttons.set(item.key, btn);
+    return btn;
+  });
+
+  const el = h('div', { class: 'main-topbar' }, newBtn, ...items);
+
+  function setActive(section: SidebarSection): void {
+    for (const [key, btn] of buttons) btn.classList.toggle('active', key === section);
+  }
+
+  return { el, setActive };
 }
 
 export function mountApp(root: HTMLElement, store: Store, options: MountOptions = {}): { refresh: () => void } {
@@ -97,47 +133,50 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
     shell = null;
   }
 
-  function layoutPanel(): void {
-    if (!shell) return;
-    if (shell.mobileQuery.matches && shell.showListInMain) shell.panel.mount(shell.main);
-    else shell.sidebar.restorePanel(shell.panel.root);
-  }
-
-  function ensureShell(section: SidebarSection, openNoteId: string | null, showListInMain = false): ShellHandle {
+  function ensureShell(section: SidebarSection, openNoteId: string | null): ShellHandle {
     if (!shell) {
-      const panel = createNotePanel(ctx);
-      const sidebar = renderSidebar(ctx, section, panel.root);
+      const sidebarPanel = createNotePanel(ctx);
+      const mainPanel = createNotePanel(ctx);
+      const sidebar = renderSidebar(ctx, section, sidebarPanel);
+      const { el: mainTopBar, setActive: setMainTopBarActive } = buildMainTopBar(ctx);
       const main = h('div', { class: 'main' });
       const el = h('div', { class: 'app-shell' }, sidebar.el, main);
       clear(root);
       root.append(el);
-      const mobileQuery = window.matchMedia('(max-width:760px)');
-      shell = { el, main, sidebar, panel, activeNav: section, showListInMain, mobileQuery };
-      mobileQuery.addEventListener('change', layoutPanel);
-    } else {
-      if (shell.activeNav !== section) {
-        shell.sidebar.setActive(section);
-        shell.activeNav = section;
-      }
-      shell.showListInMain = showListInMain;
+      shell = { el, main, sidebar, sidebarPanel, mainPanel, mainTopBar, setMainTopBarActive, activeNav: section };
+    } else if (shell.activeNav !== section) {
+      shell.sidebar.setActive(section);
+      shell.activeNav = section;
     }
-    if (section !== 'settings') shell.panel.setSection(section as NotePanelSection);
-    shell.panel.setOpenNote(openNoteId);
-    layoutPanel();
+    if (section !== 'settings') {
+      shell.sidebarPanel.setSection(section as NotePanelSection);
+      shell.mainPanel.setSection(section as NotePanelSection);
+      shell.sidebarPanel.setOpenNote(openNoteId);
+      shell.mainPanel.setOpenNote(openNoteId);
+    }
+    shell.setMainTopBarActive(section);
+    if (openNoteId === null && section !== 'settings') {
+      clear(shell.main);
+      shell.main.append(shell.mainTopBar, shell.mainPanel.root);
+    }
 
     return {
       main: shell.main,
-      panelInMain: shell.mobileQuery.matches && showListInMain,
       setSection(s: SidebarSection): void {
         if (!shell) return;
         if (shell.activeNav !== s) {
           shell.sidebar.setActive(s);
           shell.activeNav = s;
         }
-        if (s !== 'settings') shell.panel.setSection(s as NotePanelSection);
+        shell.setMainTopBarActive(s);
+        if (s !== 'settings') {
+          shell.sidebarPanel.setSection(s as NotePanelSection);
+          shell.mainPanel.setSection(s as NotePanelSection);
+        }
       },
       setOpenNote(id: string | null): void {
-        shell?.panel.setOpenNote(id);
+        shell?.sidebarPanel.setOpenNote(id);
+        shell?.mainPanel.setOpenNote(id);
       },
     };
   }
@@ -205,8 +244,12 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
   render();
 
   function refresh(): void {
-    if (shell) shell.panel.refresh();
-    else render();
+    if (shell) {
+      shell.sidebarPanel.refresh();
+      shell.mainPanel.refresh();
+    } else {
+      render();
+    }
   }
 
   return { refresh };

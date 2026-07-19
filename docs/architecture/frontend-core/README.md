@@ -21,7 +21,7 @@ params, envelope formats): `docs/architecture/README.md`. Client state:
 | `api/auth.ts`, `api/notes.ts` | typed functions mirroring `api-auth-usage.md` / `api-notes-usage.md` one-to-one; move ciphertext and wrapped-key strings only, no crypto here |
 | `store/types.ts` | the `Store` **contract** every view codes against (`sync`, `listNotes`, `getNote`, `saveNote`, trash/restore/purge, share/unshare, comments, `search`) — no persistence assumptions. `pinned` is gone; pin state lives in a note's `tags` |
 | `search.ts` | in-memory substring match over title only, given a plain list of `{id, title}` |
-| `views/*` | hash-routed screens (auth, list, editor, share dialog, settings, public reader) plus `dom.ts` (framework-free DOM builder, incl. `openDialog()`), `markdown.ts` (Markdown → sanitized HTML, lazy Mermaid), `app.ts` (router + the persistent shell, see below), `sidebar.ts` (chrome-only: brand, nav, footer), `notePanel.ts` (the stateful note-list component, see below), `tagsEditor.ts` (the chip-style tag editor, including the control-tag typeahead), and `controlTags.ts` (the `CONTROL_KEYS`/`BOOLEAN_CONTROLS` registry — see "Notebook UI" below) |
+| `views/*` | hash-routed screens (auth, list, editor, share dialog, settings, public reader) plus `dom.ts` (framework-free DOM builder, incl. `openDialog()`), `markdown.ts` (Markdown → sanitized HTML, lazy Mermaid), `app.ts` (router + the persistent shell, see below), `sidebar.ts` (chrome: brand/status row, a picker↔drill-in section state machine, settings, and the account row), `notePanel.ts` (the stateful note-list component, see below — instantiated twice per session, see "Persistent shell" below), `tagsEditor.ts` (the chip-style tag editor, including the control-tag typeahead), and `controlTags.ts` (the `CONTROL_KEYS`/`BOOLEAN_CONTROLS` registry — see "Notebook UI" below) |
 | `connection.ts` | Tracks `navigator.onLine`, whether a valid access token is held, last successful sync, and a pending-write count; a subscribe/notify module (`connectionStatus()`, `onConnectionChange()`) — see "Persistent shell" below |
 
 `frontend/web` supplies the in-memory `Store` implementation
@@ -160,43 +160,84 @@ activation"):
 
 `app.ts` no longer rebuilds the DOM on every hash navigation. `mountApp`
 keeps a module-local `Shell` (the `.app-shell` element, the sidebar chrome,
-the `.main` host, and one `NotePanel` instance) that's created once on the
-first authenticated render and reused for every subsequent list/editor/
-settings navigation within the session; it's torn down only on lock/logout
-or a route leaving the authenticated area (public reader, auth views).
-`ensureShell(section, openNoteId, showListInMain?)` — exposed on
-`AppContext` so `listView.ts`/`editorView.ts`/`settingsView.ts` don't need
-their own shell-building code — updates the active nav link and the note
-panel in place and returns a `ShellHandle` (`main`, `panelInMain`,
-`setSection`, `setOpenNote`) instead of a fresh tree.
+the `.main` host, **two** `NotePanel` instances, and the main-pane mini top
+bar — see below) that's created once on the first authenticated render and
+reused for every subsequent list/editor/settings navigation within the
+session; it's torn down only on lock/logout or a route leaving the
+authenticated area (public reader, auth views). `ensureShell(section,
+openNoteId)` — exposed on `AppContext` so `listView.ts`/`editorView.ts`/
+`settingsView.ts` don't need their own shell-building code — updates the
+active nav link and both note panels in place and returns a `ShellHandle`
+(`main`, `setSection`, `setOpenNote`) instead of a fresh tree. Whenever
+`openNoteId` is `null` and `section` isn't `'settings'`, `ensureShell`
+itself clears `.main` and populates it with the main-pane top bar + the
+main `NotePanel` — callers no longer render an "empty" placeholder or
+special-case mobile.
 
 `notePanel.ts`'s `createNotePanel(ctx)` lifts the note-list rendering that
 used to live inline in `sidebar.ts` into a standalone stateful component
-(`mount(host)`, `setSection()`, `setOpenNote()`, `refresh()`) created once
-per session. Its search/tag-filter/scroll state lives in the component's
+(`root`, `search` — the search `<input>`, exposed separately so a caller can
+relocate it in the DOM — `mount(host)`, `setSection()`, `setOpenNote()`,
+`refresh()`). Its search/tag-filter/scroll state lives in the component's
 own closure, not rebuilt per navigation, and `setOpenNote()` only toggles a
 CSS class on the affected rows — no list rebuild. On mount it renders
 cached rows from `store.listNotes()` immediately and syncs in the
 background; it never blanks an already-populated list behind a "Syncing…"
 placeholder.
 
-**Mobile master-detail** reuses the same panel instance rather than a
-second list implementation: `ensureShell(..., showListInMain: true)`
-(only `listView.ts` passes `true`) re-hosts `panel.root` into `.main` when
-`matchMedia('(max-width:760px)').matches`, or back into its sidebar anchor
-(`sidebar.ts`'s `restorePanel()`, which re-inserts it before the sidebar's
-spacer element) otherwise — a `change` listener on the media query
-re-runs the same decision on rotation/resize. `styles.css`'s mobile rule
-that hides `.sidebar-body` is scoped to `.sidebar .sidebar-body` so it only
-hides the panel while it's parked in the sidebar, not while JS has moved it
-into `.main`.
+**Two independent `NotePanel` instances, two independent browsing
+surfaces.** `ensureShell` creates a `sidebarPanel` (lives in `sidebar.ts`'s
+drill-in section, see below) and a `mainPanel` (lives in `.main`, shown
+whenever no note is open — on every screen size, not just mobile). Both
+always mirror the same route section (`ensureShell`/`setSection` call
+`setSection`/`setOpenNote` on both), so they never disagree about *what*
+they're showing — they're just two independently-visible places to browse
+it. This lets a desktop user either drill into the sidebar's own list or
+use the main pane's mini top bar (`+` / My notes / Shared / Trash /
+Settings, plus a collapse button for the sidebar) without needing the
+sidebar at all; on narrow (≤760px) viewports `.sidebar` is hidden by CSS
+entirely and the main pane's top bar + `mainPanel` is the sole navigation
+surface (this is what "mobile" looks like, and it's the same code path as
+desktop's optional browse mode, not a separate implementation).
+
+**`sidebar.ts` is a picker↔section state machine, local UI state only.**
+Top level is three big My notes / Shared with me / Trash buttons (a "parent
+selection" screen — deliberately *not* shown together with a list, per
+design feedback that the two didn't read as separate levels). Clicking one
+navigates **and** drills the sidebar into that section: a `‹` back / `+`
+new-page / search-title row (the search `<input>` is `sidebarPanel.search`,
+moved out of the panel's own DOM into this row), then the tag-filter chips,
+then the list, then (always, regardless of picker/section state) Settings
+and an account row (email, spaced from a new logout button — see below).
+The sidebar's own `‹` only collapses back to the picker; it's local,
+sticky UI state, not a route change — the main pane keeps showing whatever
+section is active regardless. A collapse/expand toggle (`chevronsLeft` /
+`chevronRight`, persisted in `localStorage`) shrinks the sidebar to a bare
+rail, useful once the main pane can browse on its own.
 
 **Connection status** (`connection.ts`) is a small subscribe/notify module:
 `connectionStatus()` combines `navigator.onLine` and whether a valid access
-token is held into `offline` / `syncing` / `synced`, plus a pending-write
-count pushed by the desktop write queue. `sidebar.ts` renders it as a chip
-next to the session email; `shareView.ts` and `editorView.ts`'s comment
-controls disable (not throw) their server-only actions while offline.
+token is held into `offline` / `syncing` / `synced` (labeled "Offline" /
+"Syncing…" / **"Online"**), plus a pending-write count pushed by the
+desktop write queue. `sidebar.ts` renders it as a chip in the top brand row
+(icon + "Memoza" + status), not next to the email anymore; `shareView.ts`
+and `editorView.ts`'s comment controls disable (not throw) their
+server-only actions while offline.
+
+**Logout** (`authViews.ts`'s `performLogout(ctx)`, shared by the sidebar's
+account-row button, a matching "Log out" action in `settingsView.ts` (the
+only logout affordance on viewports ≤760px, where `.sidebar` is hidden —
+Settings stays reachable there via the main pane's mini top bar), and the
+lock screen's "Log out" link — which previously
+only forgot the remembered email without ending the session, a latent bug
+fixed by routing it through the same helper) warns first
+(`confirmDialog`) if `connectionStatus().pendingCount > 0` ("this device has
+unsynced changes, logging out now will lose them"), otherwise proceeds
+straight away: best-effort `POST /auth/logout`, `ctx.onLogout?.()` (desktop
+wipes its local SQLite store + OS-keystore secret), clears session state and
+the remembered email, and navigates to a blank `/login` — never the
+lock screen, so a logged-out device shows neither a stale email nor a
+password field.
 
 ## Decisions
 
@@ -285,6 +326,56 @@ controls disable (not throw) their server-only actions while offline.
 
 ## Changes
 
+- 2026-07-19 (navigation redesign) — Second UI pass on top of the same day's
+  render-architecture work below:
+  - **Sidebar became a picker↔section drill-in** instead of showing the
+    My notes/Shared/Trash nav and the list together; **a second, independent
+    `NotePanel` instance now lives in `.main`** and is shown by default
+    whenever no note is open, on every screen size — see "Persistent shell,
+    note panel, and mobile layout" above for the full shape. This replaces
+    `listView.ts`'s old `main-empty` placeholder (removed, along with its
+    CSS) and the old `showListInMain`/`panelInMain`/`mobileQuery` plumbing
+    in `app.ts` and `ShellHandle` (mobile now gets the same "browse in
+    main" behavior as desktop's new optional mode, via one code path, not a
+    breakpoint-gated special case).
+  - **Fixed a real bug while doing it**: on mobile, navigating from an open
+    note back to the list never cleared `.main` — `NotePanel.mount()` just
+    appended the panel, and `listView.ts` skipped `clear(main)` whenever
+    `panelInMain` was true — so the old editor DOM stayed on top and the
+    back action looked like it did nothing. `ensureShell` now always
+    `clear()`s `.main` before repopulating it, which fixes this by
+    construction (there's no path that appends without clearing anymore).
+  - **Connection chip** moved from next to the session email to the top
+    brand row (icon + "Memoza" + chip), and the `synced` state now reads
+    "Online" instead of "Synced".
+  - **Logout**: sidebar's account row gained a real logout button (spaced
+    from the email, not jammed against it), and `settingsView.ts` gained a
+    matching one (the only reachable one at ≤760px, where `.sidebar` is
+    hidden) — both wired to a new shared `performLogout()` (see above),
+    which also fixed the lock screen's logout link (previously forgot the
+    remembered email but left the session live). This supersedes the
+    2026-07-13 (navigation + icon pass) entry's "no logout button anywhere
+    in `views/*`" note below — `rememberEmail: false` shells (web) still
+    never show the lock screen, but any shell can now end a session
+    explicitly.
+  - **Desktop: no repeated password prompts.** `authViews.ts`'s
+    `unlockWithPassword` now silently calls `ctx.biometricControl.enable()`
+    after any successful password unlock (online or offline) if it isn't
+    already enabled — previously this was an opt-in the user had to find in
+    Settings. `renderLock` now attempts `unlockProvider.unlock()`
+    immediately on mount when available, showing a brief "Unlocking…" state
+    instead of a password form, and only falls back to the password field
+    if that fails or no provider is available. Still the one sanctioned
+    raw-key-bytes-at-rest exception (OS keystore only, see
+    `frontend-desktop`'s `CLAUDE.md`) — no change to what's stored, only to
+    when the client offers to use it.
+  - **Editor toolbar** is now one row (`back` — a new double-chevron
+    `chevronsLeft` icon, to read as "further back" than the sidebar's
+    single-chevron section-back — then the page-jump cluster centered
+    ("Page" label, `‹`, the page number field, `›`), then Preview/Share/
+    Shortcut/Trash actions on the trailing edge) instead of a back link
+    above a separate page bar above a separate action row. `dom.ts` gained
+    `chevronsLeft` and a `logout` icon.
 - 2026-07-19 (implemented) — Frontend render architecture + mobile pass, per
   `yes-its-so-bad-dapper-shell.md`'s plan:
   - **Persistent shell** (`app.ts`): replaced the "rebuild `.app-shell` from

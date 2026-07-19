@@ -19,10 +19,37 @@ import {
   deriveCredential,
   buildPasswordEnvelope,
 } from '../crypto/keys';
-import { setSession, setAccessToken } from '../crypto/session';
+import { setSession, setAccessToken, logout as clearSession } from '../crypto/session';
 import { decodeAccessToken } from '../crypto/jwt';
 import { pemToDer, toBase64, fromUtf8 } from '../crypto/codec';
 import { ESCROW_PUBLIC_KEY_PEM, MIN_PASSWORD_LENGTH, KDF_ITERATIONS, EMAIL_STORAGE_KEY } from '../config';
+import { connectionStatus } from '../connection';
+import { confirmDialog } from './shareView';
+
+export function performLogout(ctx: AppContext): void {
+  const { pendingCount } = connectionStatus();
+
+  function doLogout(): void {
+    void (async () => {
+      await authApi.logout().catch(() => undefined);
+      await ctx.onLogout?.();
+      clearSession();
+      localStorage.removeItem(EMAIL_STORAGE_KEY);
+      ctx.navigate('/login');
+    })();
+  }
+
+  if (pendingCount > 0) {
+    confirmDialog(
+      'Log out?',
+      `This device has ${pendingCount} change${pendingCount === 1 ? '' : 's'} that ${pendingCount === 1 ? "hasn't" : "haven't"} synced yet. Logging out now will lose ${pendingCount === 1 ? 'it' : 'them'}.`,
+      'Log out anyway',
+      doLogout
+    );
+  } else {
+    doLogout();
+  }
+}
 
 const USERNAME_RE = /^(?!-)[a-z0-9-]{3,32}(?<!-)$/;
 
@@ -59,11 +86,21 @@ async function unlockOffline(ctx: AppContext, email: string, wrapKey: CryptoKey)
   return true;
 }
 
+async function maybeEnableBiometric(ctx: AppContext, password: string): Promise<void> {
+  const control = ctx.biometricControl;
+  if (!control) return;
+  if (await control.isEnabled()) return;
+  await control.enable(password).catch(() => undefined);
+}
+
 async function unlockWithPassword(ctx: AppContext, email: string, password: string): Promise<void> {
   const { authHash, wrapKey } = await deriveCredential(password, email, KDF_ITERATIONS);
 
   if (!navigator.onLine) {
-    if (await unlockOffline(ctx, email, wrapKey)) return;
+    if (await unlockOffline(ctx, email, wrapKey)) {
+      await maybeEnableBiometric(ctx, password);
+      return;
+    }
     throw new Error("You're offline and no cached account was found on this device.");
   }
 
@@ -71,7 +108,10 @@ async function unlockWithPassword(ctx: AppContext, email: string, password: stri
   try {
     result = await authApi.login(email, authHash);
   } catch (err) {
-    if (!(err instanceof ApiError) && (await unlockOffline(ctx, email, wrapKey))) return;
+    if (!(err instanceof ApiError) && (await unlockOffline(ctx, email, wrapKey))) {
+      await maybeEnableBiometric(ctx, password);
+      return;
+    }
     throw err;
   }
   setAccessToken(result.access_token);
@@ -96,6 +136,7 @@ async function unlockWithPassword(ctx: AppContext, email: string, password: stri
     wrappedDek: result.wrapped_dek,
     wrappedPrivateKey: result.wrapped_private_key,
   });
+  await maybeEnableBiometric(ctx, password);
 
   ctx.navigate('/');
 }
@@ -380,63 +421,64 @@ export function renderLogin(ctx: AppContext): void {
 
 export async function renderLock(ctx: AppContext, email: string): Promise<void> {
   const { root, navigate, unlockProvider } = ctx;
-  clear(root);
 
-  const passwordInput = h('input', {
-    type: 'password',
-    required: 'true',
-    autocomplete: 'current-password',
-  }) as HTMLInputElement;
   const errorHost = h('div', {});
-  const submitBtn = h('button', { type: 'submit' }, 'Unlock') as HTMLButtonElement;
-  const logoutLink = h('a', { href: '#' }, 'Log out');
-  logoutLink.addEventListener('click', e => {
-    e.preventDefault();
-    localStorage.removeItem(EMAIL_STORAGE_KEY);
-    navigate('/login');
-  });
 
-  const form = h(
-    'form',
-    {
-      onsubmit: (e: Event) => {
-        e.preventDefault();
-        void submit();
-      },
-    },
-    h('p', {}, email),
-    h('label', {}, 'Password', passwordInput),
-    errorHost,
-    submitBtn
-  );
-
-  const biometricHost = h('div', {});
-  if (unlockProvider && (await unlockProvider.isAvailable())) {
-    const biometricBtn = h('button', { type: 'button' }, 'Unlock with biometrics');
-    biometricBtn.addEventListener('click', async () => {
-      clear(errorHost);
-      try {
-        await unlockProvider.unlock();
-        navigate('/');
-      } catch (err) {
-        errorHost.append(errorBanner(err instanceof Error ? err.message : 'Biometric unlock failed'));
-      }
+  function renderPasswordForm(): void {
+    clear(root);
+    const passwordInput = h('input', {
+      type: 'password',
+      required: 'true',
+      autocomplete: 'current-password',
+    }) as HTMLInputElement;
+    const submitBtn = h('button', { type: 'submit' }, 'Unlock') as HTMLButtonElement;
+    const logoutLink = h('a', { href: '#' }, 'Log out');
+    logoutLink.addEventListener('click', e => {
+      e.preventDefault();
+      performLogout(ctx);
     });
-    biometricHost.append(biometricBtn);
-  }
 
-  root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, 'Unlock Memoza'), biometricHost, form, logoutLink));
+    const form = h(
+      'form',
+      {
+        onsubmit: (e: Event) => {
+          e.preventDefault();
+          void submit();
+        },
+      },
+      h('p', {}, email),
+      h('label', {}, 'Password', passwordInput),
+      errorHost,
+      submitBtn
+    );
 
-  async function submit(): Promise<void> {
-    clear(errorHost);
-    submitBtn.disabled = true;
-    try {
-      await unlockWithPassword(ctx, email, passwordInput.value);
-    } catch (err) {
-      submitBtn.disabled = false;
-      errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Unlock failed'));
+    root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, 'Unlock Memoza'), form, logoutLink));
+
+    async function submit(): Promise<void> {
+      clear(errorHost);
+      submitBtn.disabled = true;
+      try {
+        await unlockWithPassword(ctx, email, passwordInput.value);
+      } catch (err) {
+        submitBtn.disabled = false;
+        errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Unlock failed'));
+      }
     }
   }
+
+  if (unlockProvider && (await unlockProvider.isAvailable())) {
+    clear(root);
+    root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, 'Unlocking…'), h('p', {}, email)));
+    try {
+      await unlockProvider.unlock();
+      navigate('/');
+      return;
+    } catch (err) {
+      errorHost.append(errorBanner(err instanceof Error ? err.message : 'Automatic unlock failed — enter your password.'));
+    }
+  }
+
+  renderPasswordForm();
 }
 
 export function renderResetRequest(ctx: AppContext): void {

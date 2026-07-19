@@ -30,7 +30,7 @@ seams swapped for native implementations:
 |---|---|---|
 | `crypto`, `api` | shared | **shared, unchanged** |
 | `store` | in-memory, online-only | **SQLite-backed, offline-first** (local ciphertext cache + durable write queue) |
-| unlock | password every session | **OS-keystore / biometric** convenience unlock after first password unlock |
+| unlock | password every session | **OS-keystore / biometric** convenience unlock, auto-enabled after the first successful password unlock |
 
 The Rust core owns only what the WebView can't: the local SQLite database,
 secure OS-keystore access, the auto-updater, native file dialogs (import/export),
@@ -69,6 +69,18 @@ user unlocks without retyping the password each launch:
   after logout, on a new device, or as a fallback.
 - Keys never leave the client and never persist unsealed; the OS keystore holds
   only the wrapping secret. Logout wipes the SQLite store and the keystore entry.
+- **Auto-enabled, not opt-in.** `frontend/core/views/authViews.ts`'s
+  `unlockWithPassword` now calls `ctx.biometricControl.enable(password)`
+  itself right after any successful password unlock (online or offline) if
+  it isn't already on — so a desktop user is never asked for their password
+  a second time on the same device without deliberately logging out. The
+  Settings → "Biometric / OS unlock" section (`settingsView.ts`) still shows
+  an explicit **Disable** action for anyone who wants to opt back out to
+  password-only; there's no UI path to opt back *in* manually since it's
+  already on by default. `renderLock` reflects this: when a provider is
+  available it calls `unlockProvider.unlock()` immediately on mount (a brief
+  "Unlocking…" screen) and only falls back to showing the password form if
+  that fails.
 
 ## Offline password unlock
 
@@ -89,8 +101,9 @@ the same envelope, reached via the password instead of the OS keystore.
 
 **Connection status.** `frontend/core/connection.ts` combines
 `navigator.onLine` and whether a valid access token is held into
-`offline`/`syncing`/`synced`, shown as a chip next to the session email in
-the sidebar. While offline, `shareView.ts` and the editor's comment controls
+`offline`/`syncing`/`synced` (shown as "Offline"/"Syncing…"/"Online"),
+rendered as a chip in the sidebar's top brand row. While offline,
+`shareView.ts` and the editor's comment controls
 disable their server-only actions (share, unshare, publish, post/delete
 comment) instead of throwing — the write queue above already makes
 share/unshare/comment mutations safe to queue while offline, but the UI
@@ -230,6 +243,15 @@ can't be verified without a live Rust toolchain.
 
 ## Changes
 
+- 2026-07-19 (navigation redesign) — Convenience unlock is now auto-enabled
+  after the first password unlock instead of an opt-in Settings toggle (see
+  "Convenience unlock (OS keystore / biometrics)" above) — no code change on
+  this shell's side, the new call lives in `frontend/core/views/authViews.ts`
+  and uses the existing `biometricControl`/`localAccount` hooks unchanged.
+  Logout now goes through `frontend/core`'s new shared `performLogout()`,
+  which still calls this shell's `onLogout` (wipes the SQLite store + the
+  keystore entry) exactly as before. See `frontend-core/README.md`'s Changes
+  for the full cross-shell navigation redesign.
 - 2026-07-19 (implemented) — Offline password unlock, connection-status chip,
   and a write-queue backoff retry (see "Offline password unlock" above for
   the full mechanics). `unlock.ts` gained `getLocalAccountFor(email)`,

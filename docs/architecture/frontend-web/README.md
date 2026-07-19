@@ -164,6 +164,17 @@ in-memory `store` impl and the app entry, and the Tauri shell later reuses
 
 ## Changes
 
+- 2026-07-19 (navigation redesign) — Adopted `frontend-core`'s sidebar
+  drill-in + main-pane browse mode and its new shared `performLogout()`
+  (no web-specific code needed — see `frontend-core`'s Changes). This
+  updates the 2026-07-13 "no remembered email" entry below: the web shell
+  now does show a logout button — in the sidebar's account row on wide
+  viewports, and in Settings (reachable from the main pane's mini top bar
+  at any width, including the ≤760px layout where the sidebar itself is
+  hidden) everywhere else. Clicking it clears the in-memory session and
+  returns to the login form — same net effect as a reload, just explicit.
+  `rememberEmail: false` is unchanged: web still never shows the
+  quick-unlock lock screen.
 - 2026-07-19 (implemented) — Adopted the persistent-shell render
   architecture and mobile master-detail layout built in `frontend-core`
   (see its Changes for the full mechanics — this shell needed no
