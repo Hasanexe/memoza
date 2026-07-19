@@ -18,13 +18,10 @@ if (!root) throw new Error('Missing #app root element');
 const store = createMemoryStore();
 const app = mountApp(root, store, { rememberEmail: false });
 
-async function syncAndRefresh(): Promise<void> {
-  if (!isUnlocked()) return;
-  await store.sync();
-  app.refresh();
-}
-
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') void syncAndRefresh();
+  if (document.visibilityState === 'visible' && isUnlocked()) app.refresh();
 });
-window.addEventListener('online', () => void syncAndRefresh());
+window.addEventListener('online', () => {
+  if (!isUnlocked()) return;
+  void store.sync(true).then(() => app.refresh());
+});

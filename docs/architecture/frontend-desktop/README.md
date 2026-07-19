@@ -45,7 +45,9 @@ This is the offline stack deliberately **kept out of the web app**:
   keys only**, never plaintext or raw keys (same trust boundary as D1).
 - A **durable write queue** persists pending mutations (create/edit/pin/share/
   comment) and drains to the API, retrying on the next trigger (enqueue,
-  reconnect, refocus) after a failure — surviving restarts and crashes.
+  reconnect, refocus) after a failure — surviving restarts and crashes. A
+  failed drain also schedules its own 15s backoff retry (`queue.ts`) so a
+  transient failure can't leave writes parked until the next trigger fires.
 - Pull uses the notes service's keyset cursor (`GET /notes?since=`); creates use
   client-generated ids + idempotent `PUT`; a `409` resolves keep-both. This is
   the offline-first design already specified by the notes service — the desktop
@@ -67,6 +69,36 @@ user unlocks without retyping the password each launch:
   after logout, on a new device, or as a fallback.
 - Keys never leave the client and never persist unsealed; the OS keystore holds
   only the wrapping secret. Logout wipes the SQLite store and the keystore entry.
+
+## Offline password unlock
+
+Independent of biometrics: typing the password with no network reachable
+still works, **as long as this device has signed in online at least once**
+(`local_account` — see `table.md` — must already hold this email's wrapped
+`dek`/`privateKey`). `frontend/core/views/authViews.ts`'s
+`unlockWithPassword` derives the credential locally first; if
+`navigator.onLine` is false, or the login request fails with a real network
+error (not a 401 or other server response), it unwraps the cached envelope
+via `AppContext.localAccount(email)` — backed by `unlock.ts`'s
+`getLocalAccountFor()` — and calls `setSession()` without ever setting an
+access token, instead of surfacing the network failure. A wrong password is
+still rejected: `unwrapDek` fails its AES-GCM auth tag exactly as it would
+online, so this path adds no new attack surface. The biometric provider
+above already proved the zero-network unlock flow works end-to-end; this is
+the same envelope, reached via the password instead of the OS keystore.
+
+**Connection status.** `frontend/core/connection.ts` combines
+`navigator.onLine` and whether a valid access token is held into
+`offline`/`syncing`/`synced`, shown as a chip next to the session email in
+the sidebar. While offline, `shareView.ts` and the editor's comment controls
+disable their server-only actions (share, unshare, publish, post/delete
+comment) instead of throwing — the write queue above already makes
+share/unshare/comment mutations safe to queue while offline, but the UI
+guard keeps the affordance itself honest rather than relying on every
+`Store` method's offline behavior matching. The chip's pending count reads
+`write_queue`'s row count (`queue.ts`'s `refreshPendingCount()`, called after
+every enqueue and after every drain step) — the `attempts`/`last_error`
+columns were already written per failed drain but never surfaced until now.
 
 ## Decisions
 
@@ -198,6 +230,18 @@ can't be verified without a live Rust toolchain.
 
 ## Changes
 
+- 2026-07-19 (implemented) — Offline password unlock, connection-status chip,
+  and a write-queue backoff retry (see "Offline password unlock" above for
+  the full mechanics). `unlock.ts` gained `getLocalAccountFor(email)`,
+  wired into `mountApp()`'s new `localAccount` option in `main.ts`.
+  `queue.ts`'s `drainQueue()` now schedules a 15s retry via `setTimeout` on
+  failure instead of relying solely on the next enqueue/`visibilitychange`/
+  `online` trigger, and calls a new `refreshPendingCount()` after every
+  enqueue and every drain step/failure so `connection.ts`'s pending count
+  stays live. `main.ts`'s `visibilitychange`/`online` handlers no longer
+  call `store.sync()` directly — `app.refresh()` now does a TTL-guarded sync
+  itself (see `frontend-core`'s Changes), so `online` explicitly forces one
+  (`store.sync(true)`) instead.
 - 2026-07-18 (implemented) — Committed the real app icon set to
   `src-tauri/icons/` (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.ico`,
   `icon.icns`, `icon.png`, Windows Store `Square*Logo.png`/`StoreLogo.png`),

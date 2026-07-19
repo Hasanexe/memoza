@@ -1,14 +1,78 @@
-import { h, clear, errorBanner, showToast, icon } from './dom';
+import { h, clear, errorBanner, showToast, icon, type IconName } from './dom';
 import type { AppContext } from './app';
 import type { DecryptedNote, DecryptedComment, DecryptedNoteSummary } from '../store/types';
 import { renderContent } from './markdown';
 import { renderShareDialog, confirmRestorePublished, publicPageUrl } from './shareView';
 import { requireSession } from '../crypto/session';
 import { renderTagsEditor } from './tagsEditor';
-import { renderSidebar, type SidebarSection } from './sidebar';
+import type { SidebarSection } from './sidebar';
 import { getFormat } from './controlTags';
+import { connectionStatus, onConnectionChange } from '../connection';
 
 const AUTOSAVE_DEBOUNCE_MS = 4000;
+
+function fireInput(el: HTMLTextAreaElement): void {
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.focus();
+}
+
+function wrapSelection(el: HTMLTextAreaElement, before: string, after: string, placeholder: string): void {
+  const { selectionStart, selectionEnd, value } = el;
+  const selected = value.slice(selectionStart, selectionEnd) || placeholder;
+  el.value = value.slice(0, selectionStart) + before + selected + after + value.slice(selectionEnd);
+  const start = selectionStart + before.length;
+  el.setSelectionRange(start, start + selected.length);
+  fireInput(el);
+}
+
+function prefixLines(el: HTMLTextAreaElement, prefix: string): void {
+  const { selectionStart, selectionEnd, value } = el;
+  const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
+  const lineEndSearch = value.indexOf('\n', selectionEnd);
+  const lineEnd = lineEndSearch === -1 ? value.length : lineEndSearch;
+  const block = value.slice(lineStart, lineEnd);
+  const newBlock = block
+    .split('\n')
+    .map(line => (line.startsWith(prefix) ? line : prefix + line))
+    .join('\n');
+  el.value = value.slice(0, lineStart) + newBlock + value.slice(lineEnd);
+  el.setSelectionRange(lineStart, lineStart + newBlock.length);
+  fireInput(el);
+}
+
+function insertLink(el: HTMLTextAreaElement): void {
+  const { selectionStart, selectionEnd, value } = el;
+  const text = value.slice(selectionStart, selectionEnd) || 'link text';
+  const insert = `[${text}](url)`;
+  el.value = value.slice(0, selectionStart) + insert + value.slice(selectionEnd);
+  const urlStart = selectionStart + text.length + 3;
+  el.setSelectionRange(urlStart, urlStart + 3);
+  fireInput(el);
+}
+
+const MARKDOWN_ACTIONS: { icon: IconName; label: string; run: (el: HTMLTextAreaElement) => void }[] = [
+  { icon: 'bold', label: 'Bold', run: el => wrapSelection(el, '**', '**', 'bold text') },
+  { icon: 'italic', label: 'Italic', run: el => wrapSelection(el, '*', '*', 'italic text') },
+  { icon: 'heading', label: 'Heading', run: el => prefixLines(el, '## ') },
+  { icon: 'list', label: 'List', run: el => prefixLines(el, '- ') },
+  { icon: 'checkbox', label: 'Checklist', run: el => prefixLines(el, '- [ ] ') },
+  { icon: 'link', label: 'Link', run: el => insertLink(el) },
+  { icon: 'code', label: 'Code', run: el => wrapSelection(el, '`', '`', 'code') },
+];
+
+function renderMarkdownToolbar(bodyArea: HTMLTextAreaElement): HTMLElement {
+  const row = h('div', { class: 'markdown-toolbar' });
+  for (const action of MARKDOWN_ACTIONS) {
+    const btn = h(
+      'button',
+      { type: 'button', class: 'icon-btn', 'aria-label': action.label, title: action.label },
+      icon(action.icon)
+    );
+    btn.addEventListener('click', () => action.run(bodyArea));
+    row.append(btn);
+  }
+  return row;
+}
 
 function backLink(navigate: (path: string) => void, section: SidebarSection): HTMLElement {
   const link = h(
@@ -20,13 +84,7 @@ function backLink(navigate: (path: string) => void, section: SidebarSection): HT
   return link;
 }
 
-function shell(ctx: AppContext, section: SidebarSection, openNoteId: string | null, content: HTMLElement): void {
-  ctx.root.append(
-    h('div', { class: 'app-shell' }, renderSidebar(ctx, section, openNoteId), h('div', { class: 'main' }, content))
-  );
-}
-
-function renderDeletedState(ctx: AppContext, note: DecryptedNote): void {
+function renderDeletedState(ctx: AppContext, main: HTMLElement, note: DecryptedNote): void {
   const { store, navigate } = ctx;
   const dateStr = note.deletedAt
     ? new Date(note.deletedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -54,42 +112,20 @@ function renderDeletedState(ctx: AppContext, note: DecryptedNote): void {
     restoreBtn
   );
 
-  shell(ctx, 'mine', note.id, content);
+  clear(main);
+  main.append(content);
 }
 
-export async function renderEditor(ctx: AppContext, idParam: string | null): Promise<void> {
-  const { root, store, navigate } = ctx;
-  clear(root);
-
-  const isNew = idParam === null || idParam === 'new';
-  let note: DecryptedNote | null = null;
-
-  if (!isNew && idParam) {
-    root.append(h('p', {}, 'Loading…'));
-    try {
-      note = await store.getNote(idParam);
-    } catch {
-      clear(root);
-      root.append(errorBanner('Failed to load note'));
-      return;
-    }
-    if (!note) {
-      clear(root);
-      root.append(errorBanner('Note not found'));
-      return;
-    }
-  }
-
-  if (note && note.deletedAt !== null) {
-    renderDeletedState(ctx, note);
-    return;
-  }
-
-  clear(root);
-
+function renderEditorForm(
+  ctx: AppContext,
+  main: HTMLElement,
+  note: DecryptedNote | null,
+  section: SidebarSection,
+  setOpenNote: (id: string | null) => void
+): void {
+  const { store, navigate } = ctx;
   const session = requireSession();
   const readOnly = note !== null && !note.isOwner;
-  const section: SidebarSection = note && !note.isOwner ? 'shared' : 'mine';
   let currentId = note?.id ?? null;
   let currentPageNo = note?.pageNo ?? null;
   let currentIsPublic = note?.isPublic ?? false;
@@ -99,6 +135,7 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
   bodyArea.value = note?.body ?? '';
   const previewHost = h('div', { class: 'preview hidden' });
   const statusHost = h('span', { class: 'save-status' }, '');
+  const markdownToolbar = readOnly ? null : renderMarkdownToolbar(bodyArea);
 
   if (readOnly) {
     titleInput.setAttribute('readonly', 'true');
@@ -193,6 +230,7 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
   let saveTimer: number | undefined;
   let saving = false;
   let dirty = false;
+  let active = true;
 
   function scheduleSave(): void {
     if (readOnly) return;
@@ -222,8 +260,8 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
         deleteBtn.classList.remove('hidden');
         shareBtn.classList.remove('hidden');
         commentsSection.classList.remove('hidden');
-        void loadComments();
       }
+      if (active) setOpenNote(currentId);
       shortcutBtn.classList.toggle('hidden', !(currentPageNo !== null && ctx.createShortcut));
       statusHost.textContent =
         previousId !== null && isNewId ? 'Saved as a new copy — another device changed this note' : 'Saved';
@@ -238,6 +276,27 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
 
   titleInput.addEventListener('input', scheduleSave);
   bodyArea.addEventListener('input', scheduleSave);
+  titleInput.addEventListener('blur', () => void save());
+  bodyArea.addEventListener('blur', () => void save());
+
+  function onVisibilityChange(): void {
+    if (document.visibilityState === 'hidden' && dirty) void save();
+  }
+  function onPageHide(): void {
+    if (dirty) void save();
+  }
+  function teardown(): void {
+    window.removeEventListener('hashchange', teardown);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.removeEventListener('pagehide', onPageHide);
+    unsubscribeCommentConnection();
+    active = false;
+    if (saveTimer) window.clearTimeout(saveTimer);
+    if (dirty) void save();
+  }
+  window.addEventListener('hashchange', teardown);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('pagehide', onPageHide);
 
   let showingPreview = false;
   const previewToggle = h(
@@ -249,6 +308,7 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
     showingPreview = !showingPreview;
     if (showingPreview) {
       bodyArea.classList.add('hidden');
+      markdownToolbar?.classList.add('hidden');
       previewHost.classList.remove('hidden');
       previewToggle.replaceChildren(icon('pencil'));
       previewToggle.setAttribute('aria-label', 'Edit');
@@ -256,6 +316,7 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
       await renderContent(previewHost, bodyArea.value, getFormat(tagsEditor.getTags()));
     } else {
       bodyArea.classList.remove('hidden');
+      markdownToolbar?.classList.remove('hidden');
       previewHost.classList.add('hidden');
       previewToggle.replaceChildren(icon('eye'));
       previewToggle.setAttribute('aria-label', 'Preview');
@@ -276,7 +337,7 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
   deleteBtn.addEventListener('click', async () => {
     if (!currentId) return;
     const id = currentId;
-    const view = root.querySelector('.editor-view') as HTMLElement | null;
+    const view = main.querySelector('.editor-view') as HTMLElement | null;
     view?.classList.add('mz-page--tearing');
     try {
       await store.trashNote(id);
@@ -347,19 +408,45 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
   const commentInput = h('textarea', { placeholder: 'Add a comment…' }) as HTMLTextAreaElement;
   const commentBtn = h('button', { type: 'button', class: 'primary' }, 'Post comment');
   commentBtn.addEventListener('click', async () => {
-    if (!currentId || !commentInput.value.trim()) return;
-    await store.postComment(currentId, commentInput.value.trim());
-    commentInput.value = '';
-    await loadComments();
+    if (!currentId || !commentInput.value.trim() || connectionStatus().status === 'offline') return;
+    commentBtn.disabled = true;
+    try {
+      await store.postComment(currentId, commentInput.value.trim());
+      commentInput.value = '';
+      showToast('Comment posted');
+      await loadComments();
+    } finally {
+      commentBtn.disabled = connectionStatus().status === 'offline';
+    }
+  });
+
+  function updateCommentOfflineState(): void {
+    const offline = connectionStatus().status === 'offline';
+    commentBtn.disabled = offline;
+    for (const btn of Array.from(commentsHost.querySelectorAll('button'))) (btn as HTMLButtonElement).disabled = offline;
+  }
+  updateCommentOfflineState();
+  const unsubscribeCommentConnection = onConnectionChange(updateCommentOfflineState);
+
+  let commentsLoaded = false;
+  const commentsExpandIcon = icon('chevronRight');
+  const commentsBody = h('div', { class: 'comments-body hidden' }, commentsHost, commentInput, commentBtn);
+  const commentsToggle = h('h2', { class: 'comments-toggle' }, 'Comments', commentsExpandIcon);
+  commentsToggle.addEventListener('click', () => {
+    const opening = commentsBody.classList.contains('hidden');
+    commentsBody.classList.toggle('hidden');
+    commentsToggle.classList.toggle('comments-toggle--open', opening);
+    if (opening && !commentsLoaded) {
+      commentsLoaded = true;
+      void loadComments();
+    }
   });
 
   const commentsSection = h(
     'section',
     { class: currentId ? 'comments' : 'comments hidden' },
-    h('h2', {}, 'Comments'),
-    commentsHost,
-    commentInput,
-    commentBtn
+    commentsToggle,
+    commentsBody
   );
 
   function renderComment(c: DecryptedComment): HTMLElement {
@@ -375,6 +462,7 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
       del.addEventListener('click', async () => {
         if (!currentId) return;
         await store.deleteComment(currentId, c.id);
+        showToast('Comment deleted');
         await loadComments();
       });
       el.append(del);
@@ -395,6 +483,7 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
     } catch {
       commentsHost.append(errorBanner('Failed to load comments'));
     }
+    updateCommentOfflineState();
   }
 
   const content = h(
@@ -407,12 +496,61 @@ export async function renderEditor(ctx: AppContext, idParam: string | null): Pro
     readOnly ? h('p', { class: 'readonly-notice' }, 'Shared with you — read only. You can still comment.') : null,
     titleInput,
     tagsEditor.el,
+    markdownToolbar,
     bodyArea,
     previewHost,
     commentsSection
   );
 
-  shell(ctx, section, currentId, content);
+  clear(main);
+  main.append(content);
 
-  if (currentId) void loadComments();
+  if (currentId && note?.hasUnreadComment) {
+    commentsLoaded = true;
+    commentsBody.classList.remove('hidden');
+    commentsToggle.classList.add('comments-toggle--open');
+    void loadComments();
+  }
+}
+
+export async function renderEditor(ctx: AppContext, idParam: string | null): Promise<void> {
+  const { store } = ctx;
+  const isNew = idParam === null || idParam === 'new';
+
+  if (isNew) {
+    const { main, setOpenNote } = ctx.ensureShell('mine', null);
+    renderEditorForm(ctx, main, null, 'mine', setOpenNote);
+    return;
+  }
+
+  const id = idParam as string;
+  const { main, setSection, setOpenNote } = ctx.ensureShell('mine', id);
+  clear(main);
+  main.append(h('p', {}, 'Loading…'));
+
+  let note: DecryptedNote | null;
+  try {
+    note = await store.getNote(id);
+  } catch {
+    clear(main);
+    main.append(errorBanner('Failed to load note'));
+    return;
+  }
+  if (!note) {
+    clear(main);
+    main.append(errorBanner('Note not found'));
+    return;
+  }
+
+  if (note.deletedAt !== null) {
+    setSection('mine');
+    setOpenNote(note.id);
+    renderDeletedState(ctx, main, note);
+    return;
+  }
+
+  const section: SidebarSection = note.isOwner ? 'mine' : 'shared';
+  setSection(section);
+  setOpenNote(note.id);
+  renderEditorForm(ctx, main, note, section, setOpenNote);
 }

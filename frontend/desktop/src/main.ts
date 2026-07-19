@@ -11,6 +11,7 @@ import {
   enableBiometricUnlock,
   disableBiometricUnlock,
   isBiometricEnabled,
+  getLocalAccountFor,
 } from './unlock';
 import { wipeLocalStore } from './store/db';
 import { resolveDeepLink } from './deepLink';
@@ -39,19 +40,20 @@ const app = mountApp(root, store, {
     disable: () => disableBiometricUnlock(),
   },
   createShortcut: (pageNo, title) => createPageShortcut(pageNo, title),
+  localAccount: getLocalAccountFor,
 });
-
-async function syncAndRefresh(): Promise<void> {
-  if (!isUnlocked()) return;
-  await drainQueue();
-  await store.sync();
-  app.refresh();
-}
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') void syncAndRefresh();
+  if (document.visibilityState !== 'visible' || !isUnlocked()) return;
+  void drainQueue();
+  app.refresh();
 });
-window.addEventListener('online', () => void syncAndRefresh());
+window.addEventListener('online', () => {
+  if (!isUnlocked()) return;
+  void drainQueue()
+    .then(() => store.sync(true))
+    .then(() => app.refresh());
+});
 
 void onOpenUrl(urls => {
   for (const url of urls) {

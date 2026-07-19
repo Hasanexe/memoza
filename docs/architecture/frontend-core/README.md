@@ -21,7 +21,8 @@ params, envelope formats): `docs/architecture/README.md`. Client state:
 | `api/auth.ts`, `api/notes.ts` | typed functions mirroring `api-auth-usage.md` / `api-notes-usage.md` one-to-one; move ciphertext and wrapped-key strings only, no crypto here |
 | `store/types.ts` | the `Store` **contract** every view codes against (`sync`, `listNotes`, `getNote`, `saveNote`, trash/restore/purge, share/unshare, comments, `search`) — no persistence assumptions. `pinned` is gone; pin state lives in a note's `tags` |
 | `search.ts` | in-memory substring match over title only, given a plain list of `{id, title}` |
-| `views/*` | hash-routed screens (auth, list, editor, share dialog, settings, public reader) plus `dom.ts` (framework-free DOM builder), `markdown.ts` (Markdown → sanitized HTML, lazy Mermaid), `sidebar.ts` (persistent nav + list pane), `tagsEditor.ts` (the chip-style tag editor, including the control-tag typeahead), and `controlTags.ts` (the `CONTROL_KEYS`/`BOOLEAN_CONTROLS` registry — see "Notebook UI" below) |
+| `views/*` | hash-routed screens (auth, list, editor, share dialog, settings, public reader) plus `dom.ts` (framework-free DOM builder, incl. `openDialog()`), `markdown.ts` (Markdown → sanitized HTML, lazy Mermaid), `app.ts` (router + the persistent shell, see below), `sidebar.ts` (chrome-only: brand, nav, footer), `notePanel.ts` (the stateful note-list component, see below), `tagsEditor.ts` (the chip-style tag editor, including the control-tag typeahead), and `controlTags.ts` (the `CONTROL_KEYS`/`BOOLEAN_CONTROLS` registry — see "Notebook UI" below) |
+| `connection.ts` | Tracks `navigator.onLine`, whether a valid access token is held, last successful sync, and a pending-write count; a subscribe/notify module (`connectionStatus()`, `onConnectionChange()`) — see "Persistent shell" below |
 
 `frontend/web` supplies the in-memory `Store` implementation
 (`frontend/web/src/store/memoryStore.ts`) and the Vite entry point; nothing
@@ -155,6 +156,48 @@ activation"):
 - The **login view** handles `403 "Not activated"` with a "check your email to
   activate" message, distinct from the generic `401` invalid-credentials error.
 
+## Persistent shell, note panel, and mobile layout
+
+`app.ts` no longer rebuilds the DOM on every hash navigation. `mountApp`
+keeps a module-local `Shell` (the `.app-shell` element, the sidebar chrome,
+the `.main` host, and one `NotePanel` instance) that's created once on the
+first authenticated render and reused for every subsequent list/editor/
+settings navigation within the session; it's torn down only on lock/logout
+or a route leaving the authenticated area (public reader, auth views).
+`ensureShell(section, openNoteId, showListInMain?)` — exposed on
+`AppContext` so `listView.ts`/`editorView.ts`/`settingsView.ts` don't need
+their own shell-building code — updates the active nav link and the note
+panel in place and returns a `ShellHandle` (`main`, `panelInMain`,
+`setSection`, `setOpenNote`) instead of a fresh tree.
+
+`notePanel.ts`'s `createNotePanel(ctx)` lifts the note-list rendering that
+used to live inline in `sidebar.ts` into a standalone stateful component
+(`mount(host)`, `setSection()`, `setOpenNote()`, `refresh()`) created once
+per session. Its search/tag-filter/scroll state lives in the component's
+own closure, not rebuilt per navigation, and `setOpenNote()` only toggles a
+CSS class on the affected rows — no list rebuild. On mount it renders
+cached rows from `store.listNotes()` immediately and syncs in the
+background; it never blanks an already-populated list behind a "Syncing…"
+placeholder.
+
+**Mobile master-detail** reuses the same panel instance rather than a
+second list implementation: `ensureShell(..., showListInMain: true)`
+(only `listView.ts` passes `true`) re-hosts `panel.root` into `.main` when
+`matchMedia('(max-width:760px)').matches`, or back into its sidebar anchor
+(`sidebar.ts`'s `restorePanel()`, which re-inserts it before the sidebar's
+spacer element) otherwise — a `change` listener on the media query
+re-runs the same decision on rotation/resize. `styles.css`'s mobile rule
+that hides `.sidebar-body` is scoped to `.sidebar .sidebar-body` so it only
+hides the panel while it's parked in the sidebar, not while JS has moved it
+into `.main`.
+
+**Connection status** (`connection.ts`) is a small subscribe/notify module:
+`connectionStatus()` combines `navigator.onLine` and whether a valid access
+token is held into `offline` / `syncing` / `synced`, plus a pending-write
+count pushed by the desktop write queue. `sidebar.ts` renders it as a chip
+next to the session email; `shareView.ts` and `editorView.ts`'s comment
+controls disable (not throw) their server-only actions while offline.
+
 ## Decisions
 
 - **Extractable keys exist only transiently, never at rest.** A freshly
@@ -199,6 +242,19 @@ activation"):
   authenticated actions. A distinct component makes that structurally
   impossible rather than a prop to remember. Rejected: `editorView` with a
   `readOnly`/`public` flag.
+- **Mobile master-detail routing, not a drawer/overlay.** Below 760px the
+  note list occupies the full `.main` pane (route `/`, `/shared`, `/trash`)
+  and opening a note replaces it with the editor plus a back button — the
+  same navigation model as desktop, just one pane visible at a time, reusing
+  the single persistent `NotePanel` instance rather than a second list
+  component or a slide-over. Rejected: a hamburger/drawer sidebar (extra
+  component, extra state, and the existing back-button navigation already
+  reads naturally on a phone).
+- **No split editor/preview pane, on any screen size.** The eye-icon toggle
+  that swaps the textarea and the rendered preview full-width is the only
+  authoring mode; it doesn't change with the mobile work. A side-by-side
+  split doesn't fit a phone width at all, and keeping one editing model
+  across breakpoints avoids a second preview layout to maintain.
 - **Full-bleed panes, capped prose width** — the two-pane layout uses the
   whole viewport (the left pane now carries search + filters + list, so it
   needs the room), but unrestricted line length in the rendered preview is a
@@ -221,14 +277,92 @@ activation"):
   clients without also shipping a pre-login lookup (which the crypto spec
   deliberately avoided to prevent a user-enumeration surface). Documented, not
   built.
-- **The sidebar's embedded note list has no mobile layout.** Below the
-  existing 760px breakpoint the sidebar collapses to an icon-only top bar
-  (pre-dating the notebook redesign); the search/filter/list body now living
-  in that same pane is simply hidden there rather than given its own
-  mobile drill-down. Desktop/wide-web only until a mobile-specific pass.
+- **Markdown insert-toolbar actions are line/selection-based, not a rich
+  editor.** Bold/italic/heading/list/checklist/link/code wrap or prefix the
+  current textarea selection — no undo grouping beyond the browser's own
+  textarea undo stack, no smart re-toggle (clicking Bold on already-bold
+  text wraps it again rather than stripping the markers).
 
 ## Changes
 
+- 2026-07-19 (implemented) — Frontend render architecture + mobile pass, per
+  `yes-its-so-bad-dapper-shell.md`'s plan:
+  - **Persistent shell** (`app.ts`): replaced the "rebuild `.app-shell` from
+    scratch on every `hashchange`" pattern with `ensureShell()`, built once
+    per session and reused (see "Persistent shell, note panel, and mobile
+    layout" above). `listView.ts`/`editorView.ts`/`settingsView.ts` no
+    longer call `renderSidebar()`/`clear(root)` themselves — they render
+    into the `main` host `ensureShell()` returns. `editorView.ts` dropped
+    its three internal `clear(root)` calls; it clears only its own `main`
+    content now. `sidebar.ts` shrank to chrome only (brand, nav, footer) and
+    exports a `SidebarChrome` (`el`, `setActive()`, `restorePanel()`)
+    instead of a bare element.
+  - **`notePanel.ts`** (new) extracted from `sidebar.ts`'s old
+    `renderSectionBody` — see above. Fixes: a tag filter no longer resets
+    when opening a note (state lived in the old per-render closure);
+    switching notes no longer blanks the list behind "Syncing…"; entry
+    animations (`mz-rise` stagger, `.editor-view`'s `mz-fade`) were dropped
+    from `.note-row`/`.editor-view` since they replayed on every navigation
+    under the old full-rebuild model.
+  - **`Store.sync()` gained an optional `force` parameter** with a 30s TTL
+    guard in both `memoryStore.ts` and `sqliteStore.ts` (skipped unless
+    forced; forced on the `online` event). `memoryStore.getNote()` now
+    serves from cache when a decrypted body is already held (sync already
+    nulls a note's cached body when its rev actually changes, so this is
+    safe); `sqliteStore.getNote()` already read locally. Comments now load
+    lazily on first expand of a collapsible "Comments" section instead of
+    on every editor mount, except when `hasUnreadComment` is true. Tab-focus
+    (`visibilitychange`) now calls the cheap `panel.refresh()` path instead
+    of a full app rebuild — `mountApp()`'s returned `refresh()` is now
+    shell-aware (`shell.panel.refresh()` if a shell exists, full `render()`
+    otherwise), so `web/main.ts`/`desktop/main.ts` didn't need their own
+    shell-awareness.
+  - **Mobile**: `.sidebar{flex:none}` fixes the 360px-tall empty bar at
+    ≤760px (`flex:0 0 360px`'s basis was being read as height once the
+    sidebar became a row); `100vh`→`100dvh` on `#app`/`.app-shell`/`.sidebar`
+    for mobile browser chrome; removed a dead `@media(max-width:560px)` note
+    title rule (see "Known gaps" — no longer dead post-master-detail, kept
+    removed anyway since the 1px difference is inconsequential); raised
+    `.editor-body`/search/tag-editor input font sizes to 16px to stop iOS
+    auto-zoom-on-focus. Tag chips gained a visible `×` remove button
+    (`tagsEditor.ts`'s `chip()` root changed from `<button>` to a focusable
+    `<span>` so the `×` `<button>` can nest inside it — a button can't
+    contain interactive content).
+  - **Editor input**: new Markdown insert-toolbar (`.markdown-toolbar`,
+    bold/italic/heading/list/checklist/link/code — wraps or prefixes the
+    textarea selection) shown at all widths, hidden together with the
+    textarea while in preview mode. Six new line icons added to `dom.ts`'s
+    `icon()` (bold/italic/heading/list/checkbox/code), matching the existing
+    Lucide-style primitive-shape convention per the `memoza-design` skill's
+    "use Lucide" guidance. Autosave now flushes on `blur`, `visibilitychange`,
+    and `pagehide` (previously only the 4s debounce), and a `hashchange`-
+    triggered teardown clears the pending timer and guards the one save-
+    completion side effect that touches shared panel state (`setOpenNote`)
+    behind an `active` flag, so a save for note A that resolves after the
+    user has already navigated to note B can't re-highlight A in the list.
+  - **Dialogs**: `dom.ts` gained `openDialog()` — a shared a11y wrapper
+    (`role="dialog"`, `aria-modal`, focus trap, Escape, backdrop click,
+    focus return to the trigger, optional `onClose`) now used by both
+    `confirmDialog()` (now exported) and `renderShareDialog()`.
+    `.dialog-overlay`/`.dialog` gained `overflow-y:auto` + a `max-height`
+    so a tall dialog in landscape scrolls instead of clipping unscrollably.
+    The raw `confirm()` in the trash-row purge action is now
+    `confirmDialog()`; restore/purge/comment-post/comment-delete route
+    success feedback through the existing `showToast()` instead of nothing
+    or a banner. Export/import/password-change/comment-post buttons disable
+    while their request is in flight.
+  - **Offline password unlock** (desktop only — web has no local cache to
+    unlock from): `authViews.ts`'s `unlockWithPassword` derives the
+    credential locally first; if `navigator.onLine` is false, or
+    `authApi.login` fails with a non-`ApiError` (a real network failure, not
+    a 401/etc.), it unwraps the cached envelope via a new optional
+    `AppContext.localAccount(email)` accessor and calls `setSession()`
+    without an access token, rather than rethrowing. A wrong password is
+    still rejected (`unwrapDek`'s AES-GCM auth tag fails) — not a security
+    downgrade. Requires one prior online sign-in on that device (every
+    vault is an account vault; there's no local-only vault to migrate from).
+  - **`connection.ts`** (new) — see "Persistent shell, note panel, and
+    mobile layout" above.
 - 2026-07-18 (logo) — The logomark used by `dom.ts`'s `logoMark()`/`brand()`
   (rendered from `/logomark.svg`, supplied per-shell) changed from the flat
   single-color dog-eared page to the faceted mark now canonical in the

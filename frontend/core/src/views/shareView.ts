@@ -1,8 +1,9 @@
-import { h, clear, errorBanner, infoBanner } from './dom';
+import { h, clear, errorBanner, infoBanner, openDialog } from './dom';
 import type { AppContext } from './app';
 import type { DecryptedNote } from '../store/types';
 import * as authApi from '../api/auth';
 import { requireSession } from '../crypto/session';
+import { connectionStatus, onConnectionChange } from '../connection';
 import { PUBLIC_APP_ORIGIN } from '../config';
 
 const PUBLISH_WARNING =
@@ -10,18 +11,17 @@ const PUBLISH_WARNING =
 
 const RESTORE_PUBLISHED_WARNING = 'This page was published. Restoring it puts it back on its public link immediately.';
 
-function confirmDialog(title: string, body: string, confirmLabel: string, onConfirm: () => void): void {
-  const overlay = h('div', { class: 'dialog-overlay' });
-  const cancelBtn = h('button', { type: 'button', class: 'ghost' }, 'Cancel');
-  cancelBtn.addEventListener('click', () => overlay.remove());
-  const confirmBtn = h('button', { type: 'button', class: 'primary' }, confirmLabel);
-  confirmBtn.addEventListener('click', () => {
-    overlay.remove();
-    onConfirm();
+export function confirmDialog(title: string, body: string, confirmLabel: string, onConfirm: () => void): void {
+  openDialog(close => {
+    const cancelBtn = h('button', { type: 'button', class: 'ghost' }, 'Cancel');
+    cancelBtn.addEventListener('click', close);
+    const confirmBtn = h('button', { type: 'button', class: 'primary' }, confirmLabel);
+    confirmBtn.addEventListener('click', () => {
+      close();
+      onConfirm();
+    });
+    return h('div', { class: 'dialog' }, h('h2', {}, title), h('p', {}, body), cancelBtn, confirmBtn);
   });
-
-  overlay.append(h('div', { class: 'dialog' }, h('h2', {}, title), h('p', {}, body), cancelBtn, confirmBtn));
-  document.body.append(overlay);
 }
 
 export function confirmPublish(onConfirm: () => void): void {
@@ -39,7 +39,6 @@ export function publicPageUrl(pageNo: number): string {
 
 export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublished: (pageNo: number) => void): void {
   const { store } = ctx;
-  const overlay = h('div', { class: 'dialog-overlay' });
 
   const shareEmailInput = h('input', { type: 'email', placeholder: 'Recipient email' }) as HTMLInputElement;
   const shareStatus = h('div', {});
@@ -115,29 +114,40 @@ export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublis
   }
   renderPublishSection();
 
-  const closeBtn = h('button', { type: 'button', class: 'ghost' }, 'Close');
-  closeBtn.addEventListener('click', () => overlay.remove());
+  function updateOfflineState(): void {
+    const offline = connectionStatus().status === 'offline';
+    shareBtn.disabled = offline;
+    unshareBtn.disabled = offline;
+    const publishBtn = publishSection.querySelector('button');
+    if (publishBtn) publishBtn.disabled = offline;
+  }
+  updateOfflineState();
+  const unsubscribe = onConnectionChange(updateOfflineState);
 
-  overlay.append(
-    h(
-      'div',
-      { class: 'dialog' },
-      h('h2', {}, 'Share note'),
-      h('p', {}, 'Sharing is read-only — recipients can read and comment, not edit.'),
-      h('label', {}, 'Share with', shareEmailInput),
-      shareBtn,
-      shareStatus,
-      h('hr', {}),
-      h('label', {}, 'Revoke access', unshareEmailInput),
-      unshareBtn,
-      unshareStatus,
-      h('hr', {}),
-      h('h2', {}, 'Public page'),
-      publishSection,
-      publishStatus,
-      closeBtn
-    )
+  openDialog(
+    close => {
+      const closeBtn = h('button', { type: 'button', class: 'ghost' }, 'Close');
+      closeBtn.addEventListener('click', close);
+
+      return h(
+        'div',
+        { class: 'dialog' },
+        h('h2', {}, 'Share note'),
+        h('p', {}, 'Sharing is read-only — recipients can read and comment, not edit.'),
+        h('label', {}, 'Share with', shareEmailInput),
+        shareBtn,
+        shareStatus,
+        h('hr', {}),
+        h('label', {}, 'Revoke access', unshareEmailInput),
+        unshareBtn,
+        unshareStatus,
+        h('hr', {}),
+        h('h2', {}, 'Public page'),
+        publishSection,
+        publishStatus,
+        closeBtn
+      );
+    },
+    unsubscribe
   );
-
-  document.body.append(overlay);
 }

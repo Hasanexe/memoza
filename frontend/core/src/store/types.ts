@@ -25,7 +25,7 @@ export interface DecryptedComment {
 }
 
 export interface Store {
-  sync(): Promise<void>;
+  sync(force?: boolean): Promise<void>;
   listNotes(): Promise<DecryptedNoteSummary[]>;
   getNote(id: string): Promise<DecryptedNote | null>;
   saveNote(id: string | null, title: string, body: string, tags: string[]): Promise<DecryptedNote>;

@@ -65,7 +65,13 @@ export type IconName =
   | 'notebook'
   | 'users'
   | 'globe'
-  | 'link';
+  | 'link'
+  | 'bold'
+  | 'italic'
+  | 'heading'
+  | 'list'
+  | 'checkbox'
+  | 'code';
 
 const ICON_SHAPES: Record<IconName, () => SVGElement[]> = {
   plus: () => [
@@ -127,6 +133,36 @@ const ICON_SHAPES: Record<IconName, () => SVGElement[]> = {
     svgShape('path', { d: 'M11 6.5l1.5-1.5a3.5 3.5 0 0 1 5 5L16 11.5' }),
     svgShape('path', { d: 'M13 17.5l-1.5 1.5a3.5 3.5 0 0 1-5-5L8 12.5' }),
   ],
+  bold: () => [
+    svgShape('path', { d: 'M14 12a4 4 0 0 0 0-8H6v8' }),
+    svgShape('path', { d: 'M15 20a4 4 0 0 0 0-8H6v8Z' }),
+  ],
+  italic: () => [
+    svgShape('line', { x1: '19', y1: '4', x2: '10', y2: '4' }),
+    svgShape('line', { x1: '14', y1: '20', x2: '5', y2: '20' }),
+    svgShape('line', { x1: '15', y1: '4', x2: '9', y2: '20' }),
+  ],
+  heading: () => [
+    svgShape('path', { d: 'M6 12h12' }),
+    svgShape('path', { d: 'M6 20V4' }),
+    svgShape('path', { d: 'M18 20V4' }),
+  ],
+  list: () => [
+    svgShape('path', { d: 'M3 12h.01' }),
+    svgShape('path', { d: 'M3 18h.01' }),
+    svgShape('path', { d: 'M3 6h.01' }),
+    svgShape('path', { d: 'M8 12h13' }),
+    svgShape('path', { d: 'M8 18h13' }),
+    svgShape('path', { d: 'M8 6h13' }),
+  ],
+  checkbox: () => [
+    svgShape('rect', { x: '3', y: '3', width: '18', height: '18', rx: '2' }),
+    svgShape('path', { d: 'm9 12 2 2 4-4' }),
+  ],
+  code: () => [
+    svgShape('polyline', { points: '16 18 22 12 16 6' }),
+    svgShape('polyline', { points: '8 6 2 12 8 18' }),
+  ],
 };
 
 export function icon(name: IconName, size = 20): SVGSVGElement {
@@ -142,6 +178,56 @@ export function icon(name: IconName, size = 20): SVGSVGElement {
   el.setAttribute('aria-hidden', 'true');
   el.append(...ICON_SHAPES[name]());
   return el;
+}
+
+const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+export function openDialog(build: (close: () => void) => HTMLElement, onClose?: () => void): void {
+  const trigger = document.activeElement as HTMLElement | null;
+  const overlay = h('div', { class: 'dialog-overlay' });
+  let closed = false;
+
+  function close(): void {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKeydown);
+    overlay.remove();
+    trigger?.focus();
+    onClose?.();
+  }
+
+  function onKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      close();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const focusable = Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  overlay.addEventListener('mousedown', e => {
+    if (e.target === overlay) close();
+  });
+
+  const dialogEl = build(close);
+  dialogEl.setAttribute('role', 'dialog');
+  dialogEl.setAttribute('aria-modal', 'true');
+  overlay.append(dialogEl);
+  document.body.append(overlay);
+  document.addEventListener('keydown', onKeydown);
+
+  const firstFocusable = dialogEl.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+  firstFocusable?.focus();
 }
 
 export function showToast(message: string, actionLabel?: string, onAction?: () => void): void {

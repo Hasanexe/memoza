@@ -38,10 +38,42 @@ async function encryptRecoveryKeyForEscrow(recoveryKey: string): Promise<string>
   return toBase64(ciphertext);
 }
 
+async function unlockOffline(ctx: AppContext, email: string, wrapKey: CryptoKey): Promise<boolean> {
+  if (!ctx.localAccount) return false;
+  const cached = await ctx.localAccount(email);
+  if (!cached) return false;
+
+  const dek = await unwrapDek(wrapKey, cached.wrappedDek);
+  const privateKey = await unwrapPrivateKey(wrapKey, cached.wrappedPrivateKey);
+  setSession({
+    userId: cached.userId,
+    email,
+    username: cached.username,
+    dek,
+    privateKey,
+    wrappedDek: cached.wrappedDek,
+    wrappedPrivateKey: cached.wrappedPrivateKey,
+  });
+  if (ctx.rememberEmail !== false) localStorage.setItem(EMAIL_STORAGE_KEY, email);
+  ctx.navigate('/');
+  return true;
+}
+
 async function unlockWithPassword(ctx: AppContext, email: string, password: string): Promise<void> {
   const { authHash, wrapKey } = await deriveCredential(password, email, KDF_ITERATIONS);
 
-  const result = await authApi.login(email, authHash);
+  if (!navigator.onLine) {
+    if (await unlockOffline(ctx, email, wrapKey)) return;
+    throw new Error("You're offline and no cached account was found on this device.");
+  }
+
+  let result;
+  try {
+    result = await authApi.login(email, authHash);
+  } catch (err) {
+    if (!(err instanceof ApiError) && (await unlockOffline(ctx, email, wrapKey))) return;
+    throw err;
+  }
   setAccessToken(result.access_token);
   if (ctx.rememberEmail !== false) localStorage.setItem(EMAIL_STORAGE_KEY, email);
 

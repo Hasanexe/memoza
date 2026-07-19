@@ -6,6 +6,7 @@ import { importRecipientPublicKey } from '@memoza/core/crypto/keys';
 import { requireSession } from '@memoza/core/crypto/session';
 import { search as searchIndex } from '@memoza/core/search';
 import { getFormat } from '@memoza/core/views/controlTags';
+import { markSyncing } from '@memoza/core/connection';
 import type { Store, DecryptedNoteSummary, DecryptedNote, DecryptedComment } from '@memoza/core/store/types';
 import type { NoteRow, FullNote } from '@memoza/core/api/notes';
 
@@ -17,9 +18,12 @@ interface NoteState {
   body: string | null;
 }
 
+const SYNC_TTL_MS = 30_000;
+
 export function createMemoryStore(): Store {
   const notes = new Map<string, NoteState>();
   let cursor: string | null = null;
+  let lastSyncAt = 0;
 
   async function unwrapAndDecrypt(row: NoteRow): Promise<NoteState> {
     const session = requireSession();
@@ -50,16 +54,23 @@ export function createMemoryStore(): Store {
     };
   }
 
-  async function sync(): Promise<void> {
-    for (;;) {
-      const page = await notesApi.listNotes(cursor ?? undefined);
-      for (const row of page.notes) {
-        notes.set(row.id, await unwrapAndDecrypt(row));
+  async function sync(force = false): Promise<void> {
+    if (!force && Date.now() - lastSyncAt < SYNC_TTL_MS) return;
+    markSyncing(true);
+    try {
+      for (;;) {
+        const page = await notesApi.listNotes(cursor ?? undefined);
+        for (const row of page.notes) {
+          notes.set(row.id, await unwrapAndDecrypt(row));
+        }
+        for (const id of page.tombstones) notes.delete(id);
+        for (const id of page.revoked) notes.delete(id);
+        cursor = page.next;
+        if (!page.next) break;
       }
-      for (const id of page.tombstones) notes.delete(id);
-      for (const id of page.revoked) notes.delete(id);
-      cursor = page.next;
-      if (!page.next) break;
+      lastSyncAt = Date.now();
+    } finally {
+      markSyncing(false);
     }
   }
 
@@ -68,6 +79,9 @@ export function createMemoryStore(): Store {
   }
 
   async function getNote(id: string): Promise<DecryptedNote | null> {
+    const cached = notes.get(id);
+    if (cached && cached.body !== null) return { ...toSummary(cached), body: cached.body };
+
     let full: FullNote;
     try {
       full = await notesApi.getNote(id);

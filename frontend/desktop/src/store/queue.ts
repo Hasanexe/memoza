@@ -3,6 +3,7 @@ import { ApiError } from '@memoza/core/api/client';
 import * as noteCrypto from '@memoza/core/crypto/note';
 import { requireSession } from '@memoza/core/crypto/session';
 import { getFormat } from '@memoza/core/views/controlTags';
+import { setPendingCount } from '@memoza/core/connection';
 import { getDb } from './db';
 
 export type QueueOp =
@@ -24,6 +25,12 @@ export type QueueOp =
   | { kind: 'comment'; noteId: string; commentId: string; body_ct: string }
   | { kind: 'deleteComment'; noteId: string; commentId: string };
 
+async function refreshPendingCount(): Promise<void> {
+  const db = await getDb();
+  const rows = await db.select<{ count: number }[]>('SELECT COUNT(*) as count FROM write_queue');
+  setPendingCount(rows[0]?.count ?? 0);
+}
+
 export async function enqueue(op: QueueOp): Promise<void> {
   const db = await getDb();
   const noteId = 'noteId' in op ? op.noteId : null;
@@ -31,14 +38,21 @@ export async function enqueue(op: QueueOp): Promise<void> {
     'INSERT INTO write_queue (id, kind, note_id, payload_json, created_at, attempts) VALUES (?, ?, ?, ?, ?, 0)',
     [crypto.randomUUID(), op.kind, noteId, JSON.stringify(op), Date.now()]
   );
+  await refreshPendingCount();
   void drainQueue();
 }
 
 let draining = false;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+const RETRY_DELAY_MS = 15_000;
 
 export async function drainQueue(): Promise<void> {
   if (draining) return;
   draining = true;
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+  }
   try {
     const db = await getDb();
     for (;;) {
@@ -51,11 +65,14 @@ export async function drainQueue(): Promise<void> {
       try {
         await applyOp(op);
         await db.execute('DELETE FROM write_queue WHERE id = ?', [row.id]);
+        await refreshPendingCount();
       } catch (err) {
         await db.execute('UPDATE write_queue SET attempts = attempts + 1, last_error = ? WHERE id = ?', [
           err instanceof Error ? err.message : 'Unknown error',
           row.id,
         ]);
+        await refreshPendingCount();
+        retryTimer = setTimeout(() => void drainQueue(), RETRY_DELAY_MS);
         break;
       }
     }

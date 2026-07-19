@@ -8,6 +8,7 @@ import type { FullNote } from '@memoza/core/api/notes';
 import { importRecipientPublicKey } from '@memoza/core/crypto/keys';
 import * as authApi from '@memoza/core/api/auth';
 import { getFormat } from '@memoza/core/views/controlTags';
+import { markSyncing } from '@memoza/core/connection';
 import { getDb, getCursor, setCursor } from './db';
 import { enqueue, drainQueue } from './queue';
 
@@ -42,8 +43,11 @@ interface CacheEntry {
   tags: string[];
 }
 
+const SYNC_TTL_MS = 30_000;
+
 export function createSqliteStore(): Store {
   const cache = new Map<string, CacheEntry>();
+  let lastSyncAt = 0;
 
   async function unwrapCek(row: LocalNoteRow): Promise<CryptoKey> {
     const session = requireSession();
@@ -115,38 +119,45 @@ export function createSqliteStore(): Store {
     }
   }
 
-  async function sync(): Promise<void> {
+  async function sync(force = false): Promise<void> {
     await loadCacheFromDb();
     await drainQueue();
+    if (!force && Date.now() - lastSyncAt < SYNC_TTL_MS) return;
 
-    let cursor = await getCursor();
-    for (;;) {
-      const page = await notesApi.listNotes(cursor ?? undefined);
+    markSyncing(true);
+    try {
+      let cursor = await getCursor();
+      for (;;) {
+        const page = await notesApi.listNotes(cursor ?? undefined);
 
-      for (const row of page.notes) {
-        const existing = await getLocalRow(row.id);
-        if (existing && existing.rev === row.rev) {
-          const db = await getDb();
-          await db.execute(
-            'UPDATE local_note SET has_unread_comment = ?, is_public = ?, updated_at = ?, deleted_at = ? WHERE id = ?',
-            [row.has_unread_comment ? 1 : 0, row.is_public ? 1 : 0, row.updated_at, row.deleted_at, row.id]
-          );
-          continue;
+        for (const row of page.notes) {
+          const existing = await getLocalRow(row.id);
+          if (existing && existing.rev === row.rev) {
+            const db = await getDb();
+            await db.execute(
+              'UPDATE local_note SET has_unread_comment = ?, is_public = ?, updated_at = ?, deleted_at = ? WHERE id = ?',
+              [row.has_unread_comment ? 1 : 0, row.is_public ? 1 : 0, row.updated_at, row.deleted_at, row.id]
+            );
+            continue;
+          }
+          const full = await notesApi.getNote(row.id);
+          await upsertLocalNote({
+            ...full,
+            has_unread_comment: row.has_unread_comment ? 1 : 0,
+            is_public: full.is_public ? 1 : 0,
+            updated_at: row.updated_at,
+          });
         }
-        const full = await notesApi.getNote(row.id);
-        await upsertLocalNote({
-          ...full,
-          has_unread_comment: row.has_unread_comment ? 1 : 0,
-          is_public: full.is_public ? 1 : 0,
-          updated_at: row.updated_at,
-        });
+
+        for (const id of [...page.tombstones, ...page.revoked]) await deleteLocalNote(id);
+
+        cursor = page.next;
+        await setCursor(cursor);
+        if (!cursor) break;
       }
-
-      for (const id of [...page.tombstones, ...page.revoked]) await deleteLocalNote(id);
-
-      cursor = page.next;
-      await setCursor(cursor);
-      if (!cursor) break;
+      lastSyncAt = Date.now();
+    } finally {
+      markSyncing(false);
     }
   }
 

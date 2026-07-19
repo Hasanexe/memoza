@@ -3,7 +3,7 @@ import { deriveMasterKey, deriveWrapKeyBits, importWrapKeyBits } from '@memoza/c
 import { unwrapDek, unwrapPrivateKey } from '@memoza/core/crypto/keys';
 import { setSession } from '@memoza/core/crypto/session';
 import { fromBase64, toBase64 } from '@memoza/core/crypto/codec';
-import type { UnlockProvider } from '@memoza/core/views/app';
+import type { UnlockProvider, LocalAccountSnapshot } from '@memoza/core/views/app';
 import { getDb } from './store/db';
 
 const SERVICE = 'io.memoza.desktop';
@@ -41,6 +41,18 @@ async function getLocalAccount(): Promise<LocalAccountRow | null> {
   const db = await getDb();
   const rows = await db.select<LocalAccountRow[]>('SELECT * FROM local_account WHERE id = 1');
   return rows[0] ?? null;
+}
+
+export async function getLocalAccountFor(email: string): Promise<LocalAccountSnapshot | null> {
+  const account = await getLocalAccount();
+  if (!account || account.email !== email) return null;
+  return {
+    userId: account.user_id,
+    email: account.email,
+    username: account.username,
+    wrappedDek: account.wrapped_dek,
+    wrappedPrivateKey: account.wrapped_private_key,
+  };
 }
 
 export async function clearLocalAccount(): Promise<void> {

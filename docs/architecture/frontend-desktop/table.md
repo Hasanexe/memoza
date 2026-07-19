@@ -54,8 +54,8 @@ the cursor lives only in memory for the session).
 
 Durable queue of mutations pending sync, drained FIFO. Draining stops after
 the first failure and resumes on the next trigger (enqueue, `online`,
-`visibilitychange`) — there is no timed retry/backoff schedule. Survives app
-restarts and offline periods.
+`visibilitychange`) **or** a 15s backoff timer scheduled by that same
+failure (`queue.ts`). Survives app restarts and offline periods.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -69,9 +69,10 @@ restarts and offline periods.
 
 ## `local_account`
 
-Single row: the current user's cached envelope, enabling offline biometric
-unlock (no network call needed to re-fetch `wrapped_dek`/`wrapped_private_key`
-on a fresh launch).
+Single row: the current user's cached envelope, enabling both offline
+biometric unlock and offline **password** unlock (`getLocalAccountFor()`) —
+no network call needed to re-fetch `wrapped_dek`/`wrapped_private_key` on a
+fresh launch, as long as this device has signed in online at least once.
 
 | Column | Type | Notes |
 |---|---|---|

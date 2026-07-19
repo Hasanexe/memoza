@@ -141,7 +141,7 @@ export function renderTagsEditor(
 
   function chip(tag: string): HTMLElement {
     if (readOnly) return h('span', { class: 'tag-chip' }, tag);
-    const el = h('button', { type: 'button', class: 'tag-chip' }, tag) as HTMLButtonElement;
+    const el = h('span', { class: 'tag-chip', tabindex: '0' }, tag);
     el.addEventListener('focus', () => el.classList.add('selected'));
     el.addEventListener('blur', () => el.classList.remove('selected'));
     el.addEventListener('keydown', e => {
@@ -158,6 +158,9 @@ export function renderTagsEditor(
         updateSuggestions();
       }
     });
+    const removeBtn = h('button', { type: 'button', class: 'tag-chip-remove', 'aria-label': `Remove ${tag}` }, '×');
+    removeBtn.addEventListener('click', () => removeTag(tag));
+    el.append(removeBtn);
     return el;
   }
 

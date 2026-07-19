@@ -1,6 +1,5 @@
 import { h, clear, icon } from './dom';
 import type { AppContext } from './app';
-import { renderSidebar } from './sidebar';
 
 type Tab = 'mine' | 'shared' | 'trash';
 
@@ -11,19 +10,8 @@ const EMPTY_COPY: Record<Tab, string> = {
 };
 
 export function renderList(ctx: AppContext, tab: Tab): void {
-  const { root } = ctx;
-  clear(root);
-
-  root.append(
-    h(
-      'div',
-      { class: 'app-shell' },
-      renderSidebar(ctx, tab),
-      h(
-        'div',
-        { class: 'main' },
-        h('div', { class: 'main-empty' }, icon('notebook', 40), h('p', {}, EMPTY_COPY[tab]))
-      )
-    )
-  );
+  const { main, panelInMain } = ctx.ensureShell(tab, null, true);
+  if (panelInMain) return;
+  clear(main);
+  main.append(h('div', { class: 'main-empty' }, icon('notebook', 40), h('p', {}, EMPTY_COPY[tab])));
 }

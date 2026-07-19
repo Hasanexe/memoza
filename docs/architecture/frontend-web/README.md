@@ -83,9 +83,15 @@ in-memory `store` impl and the app entry, and the Tauri shell later reuses
 - The web client holds the synced note/comment set **in memory** for the
   session; there is no IndexedDB cache and no offline write queue.
 - Reads: on unlock it pages `GET /notes?since=` (keyset `next` cursor, cursor
-  kept in memory only) to build the list, and `GET /notes/{id}` /
-  `GET /notes/{id}/comments` on open. It re-syncs on `visibilitychange` and
-  reconnect.
+  kept in memory only) to build the list. `Store.sync(force?)` skips the
+  network round-trip when the last sync was under 30s ago, unless `force` is
+  passed — the persistent note-list panel (`frontend-core`'s `notePanel.ts`)
+  calls it unforced on tab-focus and mount; the `online` event forces it.
+  `getNote(id)` serves an already-decrypted cached body directly instead of
+  re-fetching — `sync()` only clears a note's cached body when its `rev`
+  actually changed, so the cache can't go stale silently. Comments load
+  lazily, on first expand of the comments section (eagerly only when
+  `hasUnreadComment` is true), instead of on every editor mount.
 - Writes (create/edit/pin/share/comment) call the API directly. A transient
   failure retries with backoff behind a toast; a lost connection blocks the save
   (with feedback) rather than queueing — offline authoring is the desktop app's
@@ -158,6 +164,15 @@ in-memory `store` impl and the app entry, and the Tauri shell later reuses
 
 ## Changes
 
+- 2026-07-19 (implemented) — Adopted the persistent-shell render
+  architecture and mobile master-detail layout built in `frontend-core`
+  (see its Changes for the full mechanics — this shell needed no
+  web-specific code beyond what's already listed there).
+  `store/memoryStore.ts` gained the `sync(force?)` TTL guard and a cache-hit
+  path in `getNote()` (see "Online sync" above); `main.ts`'s
+  `visibilitychange`/`online` handlers were simplified to call the now
+  shell-aware `app.refresh()` instead of driving `store.sync()` +
+  `app.refresh()` themselves (`online` still forces a sync explicitly).
 - 2026-07-18 (logo) — Replaced `public/logomark.svg` (favicon + in-app brand
   lockup) with the new faceted mark canonical in the `memoza-design` skill —
   see `frontend-core`'s Changes and the skill's README "ICONOGRAPHY" for the

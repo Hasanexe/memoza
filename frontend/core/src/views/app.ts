@@ -12,7 +12,9 @@ import { renderList } from './listView';
 import { renderEditor } from './editorView';
 import { renderSettings } from './settingsView';
 import { renderPublicReader } from './publicReaderView';
-import { clear } from './dom';
+import { clear, h } from './dom';
+import { renderSidebar, type SidebarSection, type SidebarChrome } from './sidebar';
+import { createNotePanel, type NotePanel, type NotePanelSection } from './notePanel';
 import { EMAIL_STORAGE_KEY } from '../config';
 
 const PAGE_ROUTE_RE = /^[1-9][0-9]*$/;
@@ -22,18 +24,28 @@ export interface UnlockProvider {
   unlock(): Promise<void>;
 }
 
+export interface ShellHandle {
+  main: HTMLElement;
+  panelInMain: boolean;
+  setSection(section: SidebarSection): void;
+  setOpenNote(id: string | null): void;
+}
+
+export interface LocalAccountSnapshot {
+  userId: string;
+  email: string;
+  username: string;
+  wrappedDek: string;
+  wrappedPrivateKey: string;
+}
+
 export interface AppContext {
   root: HTMLElement;
   store: Store;
   navigate: (path: string) => void;
+  ensureShell: (section: SidebarSection, openNoteId: string | null, showListInMain?: boolean) => ShellHandle;
   unlockProvider?: UnlockProvider;
-  onUnlock?: (session: {
-    userId: string;
-    email: string;
-    username: string;
-    wrappedDek: string;
-    wrappedPrivateKey: string;
-  }) => void | Promise<void>;
+  onUnlock?: (session: LocalAccountSnapshot) => void | Promise<void>;
   onLogout?: () => void | Promise<void>;
   biometricControl?: {
     isEnabled(): Promise<boolean>;
@@ -43,6 +55,7 @@ export interface AppContext {
   /** Persist the last-used email so returning users see a quick unlock screen. Defaults to true (desktop's biometric unlock relies on this). Web opts out. */
   rememberEmail?: boolean;
   createShortcut?: (pageNo: number, title: string) => Promise<void>;
+  localAccount?: (email: string) => Promise<LocalAccountSnapshot | null>;
 }
 
 function currentRoute(): { segments: string[]; params: URLSearchParams } {
@@ -58,6 +71,17 @@ export interface MountOptions {
   biometricControl?: AppContext['biometricControl'];
   rememberEmail?: AppContext['rememberEmail'];
   createShortcut?: AppContext['createShortcut'];
+  localAccount?: AppContext['localAccount'];
+}
+
+interface Shell {
+  el: HTMLElement;
+  main: HTMLElement;
+  sidebar: SidebarChrome;
+  panel: NotePanel;
+  activeNav: SidebarSection;
+  showListInMain: boolean;
+  mobileQuery: MediaQueryList;
 }
 
 export function mountApp(root: HTMLElement, store: Store, options: MountOptions = {}): { refresh: () => void } {
@@ -67,18 +91,72 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
     else location.hash = hash;
   };
 
-  const ctx: AppContext = { root, store, navigate, ...options };
+  let shell: Shell | null = null;
+
+  function teardownShell(): void {
+    shell = null;
+  }
+
+  function layoutPanel(): void {
+    if (!shell) return;
+    if (shell.mobileQuery.matches && shell.showListInMain) shell.panel.mount(shell.main);
+    else shell.sidebar.restorePanel(shell.panel.root);
+  }
+
+  function ensureShell(section: SidebarSection, openNoteId: string | null, showListInMain = false): ShellHandle {
+    if (!shell) {
+      const panel = createNotePanel(ctx);
+      const sidebar = renderSidebar(ctx, section, panel.root);
+      const main = h('div', { class: 'main' });
+      const el = h('div', { class: 'app-shell' }, sidebar.el, main);
+      clear(root);
+      root.append(el);
+      const mobileQuery = window.matchMedia('(max-width:760px)');
+      shell = { el, main, sidebar, panel, activeNav: section, showListInMain, mobileQuery };
+      mobileQuery.addEventListener('change', layoutPanel);
+    } else {
+      if (shell.activeNav !== section) {
+        shell.sidebar.setActive(section);
+        shell.activeNav = section;
+      }
+      shell.showListInMain = showListInMain;
+    }
+    if (section !== 'settings') shell.panel.setSection(section as NotePanelSection);
+    shell.panel.setOpenNote(openNoteId);
+    layoutPanel();
+
+    return {
+      main: shell.main,
+      panelInMain: shell.mobileQuery.matches && showListInMain,
+      setSection(s: SidebarSection): void {
+        if (!shell) return;
+        if (shell.activeNav !== s) {
+          shell.sidebar.setActive(s);
+          shell.activeNav = s;
+        }
+        if (s !== 'settings') shell.panel.setSection(s as NotePanelSection);
+      },
+      setOpenNote(id: string | null): void {
+        shell?.panel.setOpenNote(id);
+      },
+    };
+  }
+
+  const ctx: AppContext = { root, store, navigate, ensureShell, ...options };
 
   function render(): void {
-    clear(root);
     const { segments, params } = currentRoute();
 
     if (segments.length === 2 && PAGE_ROUTE_RE.test(segments[1])) {
+      teardownShell();
+      clear(root);
       void renderPublicReader(root, segments[0], Number(segments[1]));
       return;
     }
 
     if (!isUnlocked()) {
+      teardownShell();
+      clear(root);
       if (segments[0] === 'reset' && params.get('token')) {
         void renderResetConfirm(ctx, params);
         return;
@@ -126,5 +204,10 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
   window.addEventListener('hashchange', render);
   render();
 
-  return { refresh: render };
+  function refresh(): void {
+    if (shell) shell.panel.refresh();
+    else render();
+  }
+
+  return { refresh };
 }

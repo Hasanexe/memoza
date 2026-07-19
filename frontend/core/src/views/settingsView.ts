@@ -1,6 +1,5 @@
 import { h, clear, errorBanner, infoBanner, icon } from './dom';
 import type { AppContext } from './app';
-import { renderSidebar } from './sidebar';
 import * as authApi from '../api/auth';
 import { ApiError } from '../api/client';
 import {
@@ -18,8 +17,9 @@ import { KDF_ITERATIONS, MIN_PASSWORD_LENGTH, EMAIL_STORAGE_KEY } from '../confi
 const THEME_KEY = 'theme';
 
 export function renderSettings(ctx: AppContext): void {
-  const { root, navigate, store } = ctx;
-  clear(root);
+  const { navigate, store } = ctx;
+  const { main } = ctx.ensureShell('settings', null);
+  clear(main);
   const session = requireSession();
 
   const backBtn = h(
@@ -29,27 +29,18 @@ export function renderSettings(ctx: AppContext): void {
   );
   backBtn.addEventListener('click', () => navigate('/'));
 
-  root.append(
+  main.append(
     h(
       'div',
-      { class: 'app-shell' },
-      renderSidebar(ctx, 'settings'),
-      h(
-        'div',
-        { class: 'main' },
-        h(
-          'div',
-          { class: 'main-inner settings-view' },
-          backBtn,
-          h('h1', {}, 'Settings'),
-          renderThemeSection(),
-          renderPasswordSection(),
-          ctx.biometricControl ? renderBiometricSection(ctx.biometricControl) : null,
-          renderExportSection(),
-          renderImportSection(),
-          renderDeleteSection()
-        )
-      )
+      { class: 'main-inner settings-view' },
+      backBtn,
+      h('h1', {}, 'Settings'),
+      renderThemeSection(),
+      renderPasswordSection(),
+      ctx.biometricControl ? renderBiometricSection(ctx.biometricControl) : null,
+      renderExportSection(),
+      renderImportSection(),
+      renderDeleteSection()
     )
   );
 
@@ -86,6 +77,7 @@ export function renderSettings(ctx: AppContext): void {
     const submitBtn = h('button', { type: 'button', class: 'primary' }, 'Change password');
 
     submitBtn.addEventListener('click', async () => {
+      if (submitBtn.disabled) return;
       clear(statusHost);
       if (newInput.value.length < MIN_PASSWORD_LENGTH) {
         statusHost.append(errorBanner(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`));
@@ -95,6 +87,7 @@ export function renderSettings(ctx: AppContext): void {
         statusHost.append(errorBanner('Passwords do not match'));
         return;
       }
+      submitBtn.disabled = true;
       try {
         const oldCredential = await deriveCredential(oldInput.value, session.email, KDF_ITERATIONS);
         const dek = await unwrapDekExtractable(oldCredential.wrapKey, session.wrappedDek);
@@ -137,6 +130,8 @@ export function renderSettings(ctx: AppContext): void {
         statusHost.append(infoBanner('Password changed. Other devices have been logged out.'));
       } catch (err) {
         statusHost.append(errorBanner(err instanceof ApiError ? err.message : 'Failed to change password'));
+      } finally {
+        submitBtn.disabled = false;
       }
     });
 
@@ -211,15 +206,21 @@ export function renderSettings(ctx: AppContext): void {
     const statusHost = h('div', {});
     const btn = h('button', { type: 'button', class: 'primary' }, 'Export all notes (.md)');
     btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
       clear(statusHost);
-      const summaries = (await store.listNotes()).filter(n => n.deletedAt === null);
-      const fulls = await Promise.all(summaries.map(summary => store.getNote(summary.id)));
-      const parts = fulls.filter((full): full is NonNullable<typeof full> => full !== null).map(full => `# ${full.title}\n\n${full.body}\n`);
-      if (parts.length === 0) {
-        statusHost.append(infoBanner('No notes to export'));
-        return;
+      btn.disabled = true;
+      try {
+        const summaries = (await store.listNotes()).filter(n => n.deletedAt === null);
+        const fulls = await Promise.all(summaries.map(summary => store.getNote(summary.id)));
+        const parts = fulls.filter((full): full is NonNullable<typeof full> => full !== null).map(full => `# ${full.title}\n\n${full.body}\n`);
+        if (parts.length === 0) {
+          statusHost.append(infoBanner('No notes to export'));
+          return;
+        }
+        downloadText('memoza-notes-export.md', parts.join('\n---\n\n'));
+      } finally {
+        btn.disabled = false;
       }
-      downloadText('memoza-notes-export.md', parts.join('\n---\n\n'));
     });
     return h('section', {}, h('h2', {}, 'Export'), btn, statusHost);
   }
@@ -229,18 +230,24 @@ export function renderSettings(ctx: AppContext): void {
     const statusHost = h('div', {});
     const btn = h('button', { type: 'button', class: 'primary' }, 'Import');
     btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
       clear(statusHost);
       const files = fileInput.files;
       if (!files || files.length === 0) return;
-      let imported = 0;
-      for (const file of Array.from(files)) {
-        const text = await file.text();
-        const title = file.name.replace(/\.md$/i, '');
-        await store.saveNote(null, title, text, []);
-        imported++;
+      btn.disabled = true;
+      try {
+        let imported = 0;
+        for (const file of Array.from(files)) {
+          const text = await file.text();
+          const title = file.name.replace(/\.md$/i, '');
+          await store.saveNote(null, title, text, []);
+          imported++;
+        }
+        statusHost.append(infoBanner(`Imported ${imported} note(s) as new notes`));
+        fileInput.value = '';
+      } finally {
+        btn.disabled = false;
       }
-      statusHost.append(infoBanner(`Imported ${imported} note(s) as new notes`));
-      fileInput.value = '';
     });
     return h(
       'section',
