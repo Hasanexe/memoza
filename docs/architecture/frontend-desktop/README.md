@@ -261,6 +261,15 @@ feature that's native and platform-specific.
 
 ## Changes
 
+- 2026-07-21 (mermaid + HTML-note styling) — Added `'unsafe-inline'` to the
+  `style-src` directive in `src-tauri/tauri.conf.json`'s CSP, mirroring the web
+  shell's `_headers` change. Mermaid's rendered SVG carries a `<style>` block and
+  styled HTML notes (`format: html`) carry `<style>`/`style="…"`; `style-src
+  'self'` blocked every style parsed from markup, so both rendered unstyled. Only
+  `style-src` is relaxed — `script-src`/`img-src`/`connect-src` stay
+  `'self'`-scoped, so no code-exec or external-exfiltration path opens. See the
+  `frontend-web` README's matching entry for the full rationale and the
+  rejected nonce/hash/iframe alternatives.
 - 2026-07-21 (redesign) — **Passwordless-by-design; opt-in toggle removed.** The
   Settings → "Skip password on this device" section is gone, along with the
   `biometricControl` hook and `enableBiometricUnlock`/`disableBiometricUnlock`/

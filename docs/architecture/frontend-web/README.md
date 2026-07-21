@@ -264,3 +264,19 @@ in-memory `store` impl and the app entry, and the Tauri shell later reuses
   warning. With `getNote()` now rethrowing non-404 errors, the export surfaces
   an error banner and downloads nothing rather than producing a quietly
   incomplete file.
+- 2026-07-21 (mermaid + HTML-note styling) — Added `'unsafe-inline'` to the
+  `style-src` directive in `public/_headers`. Mermaid's `render()` output embeds
+  a `<style>` block (node fills, edge strokes, fonts) and styled HTML notes
+  (`format: html`) carry `<style>`/`style="…"`; `style-src 'self'` blocks every
+  style the browser parses from markup, so both rendered unstyled with a console
+  violation in production. No code change was needed — the existing
+  DOMPurify-sanitized `renderContent` path in `frontend-core`'s `views/
+  markdown.ts` now applies styles as authored. Deliberate, scoped tradeoff:
+  `style-src` is the only directive relaxed; `script-src`, `img-src`, and
+  `connect-src` stay `'self'`-scoped, so there is no code-execution or
+  external-exfiltration path — the residual risk is local visual defacement of a
+  maliciously-styled *shared or public* note (scripts are already stripped by
+  DOMPurify). A nonce was rejected (a static Pages site can't vary one
+  per-response) and a hash was rejected (mermaid's `<style>` differs per
+  diagram); the sandboxed-iframe alternative was weighed and not taken. The
+  desktop shell's `tauri.conf.json` CSP got the same one-line change for parity.
