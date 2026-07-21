@@ -383,6 +383,39 @@ password field.
 
 ## Changes
 
+- 2026-07-21 (UI + unlock) — Four fixes. **(1)** The editor's public-link row is
+  now a fixed-height slot (`.public-badge-slot`) whether or not the page is
+  published, so paging through notes no longer jumps. **(2)** Tag-filter bar: the
+  clear (`x`) button is always present and just disables when there are no
+  filters (no more layout shift when it appears/disappears), and `.tag-chips`
+  gained top padding so a selected color chip's ring isn't clipped. `notePanel`
+  no longer rebuilds the chip DOM on every filter toggle — `toggleFilter` flips
+  the `active` class on the existing chips and re-renders only the note list
+  (`reload()` rebuilds chips only when the underlying note set changes). This
+  removes the mobile-webkit repaint bug where tapping a second color chip blanked
+  the first chip's color, and is smoother. **(3)** Passwordless unlock rework:
+  `AppContext.biometricControl` (with `isEnabled/enable/disable`) is replaced by
+  `sealDeviceUnlock(password)` (called after every successful password unlock)
+  and `onLock()` (called by `lockSession`, now async); the Settings "Skip
+  password on this device" section is removed. See `frontend-desktop`'s Changes
+  for the always-on/Lock/`ensureOnline` behavior. **(4)** The sync indicator
+  dropped its colored dot (`.sync-status::before`); it now reads as a tinted pill
+  — green text+highlight when online/synced, red when offline or on a save error
+  — in the rail and the editor top-right.
+- 2026-07-21 (bugfix/UI) — Deep-link-after-unlock: `AppContext` gained an
+  optional `takePendingRoute(): Promise<string | null>` hook. `mountApp`
+  consumes it once, on the first render after the session unlocks, and
+  navigates to the returned hash target — letting shells defer a deep link that
+  arrived while locked (see `frontend-desktop`'s Changes). Web leaves it unset.
+  Color-tag UI fixes: the shared `COLOR_VARS` map moved to `views/controlTags.ts`
+  (was duplicated in `notePanel.ts`); a selected color filter chip now keeps its
+  own color with a thick clay selection ring instead of turning clay
+  (`.chip--color.active`); colored note rows use a thicker, stronger border; the
+  open editor shows the note's color as a left accent on the title
+  (`.editor-view--color`, updated live from the tags-editor `onChange`); and the
+  tag-filter bar gained an icon-only clear button (`.tag-clear`, new `x` icon,
+  reuses the existing `common.close` string — no new translations) that clears
+  all active tag filters.
 - 2026-07-20 (i18n) — Added the `i18n/` subsystem (32 languages) — see
   "Internationalization (i18n)" above for the full shape. Registration gained
   a language picker (auto-detected from the browser, changeable before

@@ -69,22 +69,28 @@ failure (`queue.ts`). Survives app restarts and offline periods.
 
 ## `local_account`
 
-Single row: the current user's cached envelope, enabling both offline
-biometric unlock and offline **password** unlock (`getLocalAccountFor()`) —
-no network call needed to re-fetch `wrapped_dek`/`wrapped_private_key` on a
-fresh launch, as long as this device has signed in online at least once.
+Single row: the current user's cached envelope, enabling both passwordless
+unlock and offline **password** unlock (`getLocalAccountFor()`) — no network
+call needed to re-fetch `wrapped_dek`/`wrapped_private_key` on a fresh launch,
+as long as this device has signed in online at least once.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PK | Always `1` |
 | `user_id`, `email`, `username` | TEXT | |
 | `wrapped_dek`, `wrapped_private_key` | TEXT | Ciphertext, opaque — **not** key material |
-| `biometric_enabled` | INTEGER | Whether `enableBiometricUnlock` has sealed a wrap-key secret in the OS keystore |
+| `locked` | INTEGER | `1` after the **Lock** button; suppresses passwordless auto-unlock until the next password sign-in. Set by `lockDevice()`, cleared by `sealDeviceUnlock()` |
 
 ## OS keystore (outside SQLite)
 
-One secret, sealed via the `keyring` crate (Windows Credential Manager /
-macOS Keychain / Linux Secret Service), service `io.memoza.desktop`, account
-`wrapkey`: the raw `wrapKey` bytes (HKDF output, base64). Never in SQLite,
-never logged. Cleared on logout (`clearLocalAccount`) or when biometric
-unlock is disabled.
+Two secrets, sealed via the `keyring` crate (Windows Credential Manager /
+macOS Keychain / Linux Secret Service), service `io.memoza.desktop`:
+
+- account `wrapkey` — the raw `wrapKey` bytes (HKDF output, base64), used to
+  unwrap the cached envelope.
+- account `authhash` — the login `authHash` (base64), used by `ensureOnline()`
+  to silently re-obtain an access token without the password. Decrypts nothing;
+  authenticates only to the zero-knowledge server.
+
+Neither is ever in SQLite or logged. Both are cleared on logout
+(`clearLocalAccount`) and on account switch.

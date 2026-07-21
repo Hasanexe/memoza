@@ -8,6 +8,15 @@ export const CONTROL_KEYS: Record<string, ControlKeySpec> = {
   format: { single: true, values: ['md', 'html'] },
 };
 
+export const COLOR_VARS: Record<string, string> = {
+  red: 'var(--danger)',
+  orange: 'var(--clay)',
+  yellow: 'var(--gold-strong)',
+  green: 'var(--success)',
+  blue: '#3F72AF',
+  purple: 'var(--shared)',
+};
+
 export const BOOLEAN_CONTROLS = ['pin'];
 
 export type ClassifiedTag =

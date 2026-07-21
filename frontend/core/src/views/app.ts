@@ -51,15 +51,16 @@ export interface AppContext {
   unlockProvider?: UnlockProvider;
   onUnlock?: (session: LocalAccountSnapshot) => void | Promise<void>;
   onLogout?: () => void | Promise<void>;
-  biometricControl?: {
-    isEnabled(): Promise<boolean>;
-    enable(password: string): Promise<void>;
-    disable(): Promise<void>;
-  };
+  /** Seal this device's unlock key + login credential so future opens skip the password. Called on every successful password unlock. */
+  sealDeviceUnlock?: (password: string) => Promise<void>;
+  /** Mark the device locked so the next open requires the password once. */
+  onLock?: () => void | Promise<void>;
   /** Persist the last-used email so returning users see a quick unlock screen. Defaults to true (desktop's biometric unlock relies on this). Web opts out. */
   rememberEmail?: boolean;
   createShortcut?: (pageNo: number, title: string) => Promise<void>;
   localAccount?: (email: string) => Promise<LocalAccountSnapshot | null>;
+  /** Resolve a deep link that arrived while locked, consumed once the session unlocks. Returns a hash target (e.g. `#/note/<id>`) or null. */
+  takePendingRoute?: () => Promise<string | null>;
 }
 
 function currentRoute(): { segments: string[]; params: URLSearchParams } {
@@ -73,10 +74,12 @@ export interface MountOptions {
   unlockProvider?: UnlockProvider;
   onUnlock?: AppContext['onUnlock'];
   onLogout?: AppContext['onLogout'];
-  biometricControl?: AppContext['biometricControl'];
+  sealDeviceUnlock?: AppContext['sealDeviceUnlock'];
+  onLock?: AppContext['onLock'];
   rememberEmail?: AppContext['rememberEmail'];
   createShortcut?: AppContext['createShortcut'];
   localAccount?: AppContext['localAccount'];
+  takePendingRoute?: AppContext['takePendingRoute'];
 }
 
 function mainTopBarItems(): { key: SidebarSection; label: string; iconName: Parameters<typeof icon>[0]; path: string }[] {
@@ -126,7 +129,7 @@ function buildMainTopBar(ctx: AppContext): { el: HTMLElement; setActive: (sectio
       { type: 'button', class: 'icon-btn ghost main-topbar-lock', 'aria-label': t('nav.lock'), title: t('nav.lock') },
       icon('lock')
     );
-    lockBtn.addEventListener('click', () => lockSession(ctx));
+    lockBtn.addEventListener('click', () => void lockSession(ctx));
     el.append(lockBtn);
   }
 
@@ -147,6 +150,7 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
   };
 
   let shell: Shell | null = null;
+  let wasUnlocked = false;
 
   function teardownShell(): void {
     shell = null;
@@ -208,6 +212,7 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
     }
 
     if (!isUnlocked()) {
+      wasUnlocked = false;
       teardownShell();
       clear(root);
       if (segments[0] === 'reset' && params.get('token')) {
@@ -233,6 +238,15 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
         renderLogin(ctx);
       }
       return;
+    }
+
+    if (!wasUnlocked) {
+      wasUnlocked = true;
+      if (ctx.takePendingRoute) {
+        void ctx.takePendingRoute().then(target => {
+          if (target && target !== location.hash) location.hash = target;
+        });
+      }
     }
 
     if (segments[0] === 'settings') {

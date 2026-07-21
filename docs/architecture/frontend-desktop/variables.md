@@ -20,8 +20,8 @@
 
 ## Secrets
 
-None in config or env — the one sensitive value (the wrap-key bytes used for
-biometric convenience unlock) is never a static secret; it's derived at
-runtime from the user's password and sealed into the OS-native keystore via
-the `keyring` crate, not stored in any file this repo tracks. See `table.md`'s
-"OS keystore" section.
+None in config or env — the sensitive values (the wrap-key bytes and the login
+`authHash` used for passwordless unlock) are never static secrets; they're
+derived at runtime from the user's password and sealed into the OS-native
+keystore via the `keyring` crate, not stored in any file this repo tracks. See
+`table.md`'s "OS keystore" section.

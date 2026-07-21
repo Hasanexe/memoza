@@ -30,7 +30,7 @@ seams swapped for native implementations:
 |---|---|---|
 | `crypto`, `api` | shared | **shared, unchanged** |
 | `store` | in-memory, online-only | **SQLite-backed, offline-first** (local ciphertext cache + durable write queue) |
-| unlock | password every session | **OS-keystore / biometric** convenience unlock, auto-enabled after the first successful password unlock |
+| unlock | password every session | **OS-keystore passwordless unlock**, always on after the first password sign-in; the **Lock** button is the only way to require the password again |
 
 The Rust core owns only what the WebView can't: the local SQLite database,
 secure OS-keystore access, the auto-updater, native file dialogs (import/export),
@@ -55,41 +55,48 @@ This is the offline stack deliberately **kept out of the web app**:
 - **Full-body search** runs here (the local cache already holds every note), the
   feature the web client omits.
 
-## Convenience unlock (OS keystore / biometrics)
+## Passwordless unlock (OS keystore)
 
-The `crypto` module exposes a wrap/unwrap boundary; the shell hooks it so the
-user unlocks without retyping the password each launch:
+Passwordless unlock is **the design, not an option** — after the first password
+sign-in the device unlocks silently on every launch, and the only way to require
+the password again is the **Lock** button. There is no opt-in/opt-out UI.
 
 - On first unlock the user enters the password (derives `wrapKey`, unwraps
-  `dek` + `privateKey` as before).
-- The shell then seals a re-unlock secret in the **OS secure store** — Windows
-  Hello / Credential Manager, macOS Keychain + Touch ID, or mobile biometric —
-  gated by a biometric/OS prompt.
-- Later launches unlock via that OS prompt; the password is still required
-  after logout, on a new device, or as a fallback.
-- Keys never leave the client and never persist unsealed; the OS keystore holds
-  only the wrapping secret. Logout wipes the SQLite store and the keystore entry.
-- **Auto-enabled, not opt-in.** `frontend/core/views/authViews.ts`'s
-  `unlockWithPassword` now calls `ctx.biometricControl.enable(password)`
-  itself right after any successful password unlock (online or offline) if
-  it isn't already on — so a desktop user is never asked for their password
-  a second time on the same device without deliberately logging out. The
-  Settings → "Skip password on this device" section (`settingsView.ts`) still
-  shows an explicit **Disable** action for anyone who wants to opt back out to
-  password-only; there's no UI path to opt back *in* manually since it's
-  already on by default. `renderLock` reflects this: when a provider is
-  available it calls `unlockProvider.unlock()` immediately on mount (a brief
-  "Unlocking…" screen) and only falls back to showing the password form if
-  that fails.
-- **Known to be failing in practice (2026-07-20).** The flow above is
-  implemented but has never actually taken effect on the maintainer's machine —
-  `biometric_enabled` is `0` and no keystore credential exists. The enable
-  failure was being swallowed and is now logged; see the Changes entry for the
-  full diagnosis. Treat "restarts are passwordless" as intended behavior, not
-  as verified behavior, until that log identifies and fixes the cause.
-- **There is no biometric prompt yet.** Despite the historical naming, the
-  keystore read is ungated — the sealed key is readable by anything running as
-  the signed-in OS user. Windows Hello / Touch ID gating remains a follow-up.
+  `dek` + `privateKey` as before). `frontend/core/views/authViews.ts`'s
+  `unlockWithPassword` then calls `ctx.sealDeviceUnlock(password)` after **any**
+  successful password unlock (online or offline).
+- `sealDeviceUnlock` (`unlock.ts`) derives the master key once and seals **two**
+  secrets in the OS secure store (Windows Credential Manager, macOS Keychain,
+  mobile keystore): the `wrapKey` bits (`account = wrapkey`) and the login
+  `authHash` (`account = authhash`). It also clears the `locked` flag.
+- Later launches auto-unlock: `renderLock` sees `unlockProvider.isAvailable()`
+  true (a cached `local_account` exists and `locked = 0`), shows a brief
+  "Unlocking…" screen, and calls `unlockProvider.unlock()`, which unseals
+  `wrapKey`, unwraps the keys, and `setSession()`s.
+- **Staying online without the password.** Because passwordless unlock performs
+  no `/auth/login`, it obtains no access token on its own; `unlock()` therefore
+  calls `ensureOnline()`, which unseals the stored `authHash` and silently calls
+  `login(email, authHash)` to get a fresh access token. `ensureOnline()` also
+  runs from `main.ts` on reconnect/refocus, so a session that unlocked offline
+  comes back online on its own. If `authHash` is absent or login fails (e.g. the
+  password was changed on another device), the app stays offline until a password
+  sign-in — it does not error.
+- **Lock.** The Lock button (`lockSession`) calls `ctx.onLock()` →
+  `lockDevice()`, which sets `local_account.locked = 1`, then clears the session.
+  While `locked = 1`, `isAvailable()` returns false so the password form shows;
+  the next successful password unlock clears the flag and resumes passwordless.
+  The flag is persisted, so Lock survives an app restart.
+- Keys never leave the client and never persist unsealed; the keystore holds only
+  the wrapping secret and the login credential. Logout wipes the SQLite store and
+  both keystore entries.
+- **Security note.** Adding `authHash` to the keystore does not widen the blast
+  radius: the keystore already holds `wrapKey`, which decrypts every note; the
+  `authHash` only authenticates to the zero-knowledge server and can decrypt
+  nothing. The threat model is "OS-user access = note access" — Lock is a privacy
+  gate, not a cryptographic barrier.
+- **The keystore read is ungated.** The sealed secrets are readable by anything
+  running as the signed-in OS user; a true biometric *prompt* (Windows Hello /
+  Touch ID) remains a follow-up.
 
 ## Offline password unlock
 
@@ -254,6 +261,43 @@ feature that's native and platform-specific.
 
 ## Changes
 
+- 2026-07-21 (redesign) — **Passwordless-by-design; opt-in toggle removed.** The
+  Settings → "Skip password on this device" section is gone, along with the
+  `biometricControl` hook and `enableBiometricUnlock`/`disableBiometricUnlock`/
+  `isBiometricEnabled`. Passwordless unlock is now always on after the first
+  password sign-in, and the **Lock** button is the only way to require the
+  password again. New wiring: `AppContext.sealDeviceUnlock(password)` (seals
+  `wrapKey` **and** the login `authHash`) replaces `biometricControl.enable`;
+  `AppContext.onLock()` → `lockDevice()` sets the new `local_account.locked`
+  flag (replacing `biometric_enabled`, dropped via best-effort `ALTER … DROP
+  COLUMN`); `unlockProvider.isAvailable()` now gates on `locked = 0`. Fixes
+  "passwordless stays offline forever": `unlock()` and the reconnect/refocus
+  handlers in `main.ts` call the new `ensureOnline()`, which unseals `authhash`
+  and silently `login()`s to obtain an access token — see "Passwordless unlock".
+  Requires a Rust rebuild only if the keystore backend features changed (they
+  did not); the second keystore account (`authhash`) uses the existing generic
+  `seal_secret`/`unseal_secret` commands unchanged.
+- 2026-07-21 (bugfix) — Convenience unlock never actually persisted: `keyring`
+  was declared with no store feature, so keyring 3 fell back to its in-memory
+  **mock** store. `seal_secret` "succeeded" (so `biometric_enabled` was set to
+  `1`), but the entry vanished on restart and `unseal_secret` threw "No matching
+  entry found in secure storage" → the app re-prompted for the password every
+  launch. Fixed by enabling the real backends
+  (`keyring = { features = ["apple-native", "windows-native"] }`). Because
+  existing installs carry a stale `biometric_enabled = 1` pointing at an entry
+  that only lived in the mock store, `frontend/core`'s `renderLock` now clears
+  the flag (`biometricControl.disable()`) whenever automatic unlock fails, so
+  the password fallback re-seals into the real keystore — self-healing on the
+  first sign-in after the fix. Requires a Rust rebuild.
+- 2026-07-21 (bugfix) — A `.mmp`/`memoza://page` deep link opened from a **cold
+  start** used to land on the notes list: `resolveDeepLink()` runs before the
+  session is unlocked, so the page-number lookup returned `#/`, and the pending
+  URL was consumed and discarded. `main.ts` now stashes any link that arrives
+  while locked (`pendingDeepLink`) and hands `frontend/core`'s new
+  `AppContext.takePendingRoute` hook back to the app, which resolves and
+  navigates to it once — on the first render after the session unlocks (both
+  the password and convenience-unlock paths). The already-running/unlocked case
+  still resolves immediately. No Rust change.
 - 2026-07-19 (navigation redesign) — Convenience unlock is now auto-enabled
   after the first password unlock instead of an opt-in Settings toggle (see
   "Convenience unlock (OS keystore / biometrics)" above) — no code change on

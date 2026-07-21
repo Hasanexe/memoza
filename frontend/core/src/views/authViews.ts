@@ -27,7 +27,8 @@ import { connectionStatus } from '../connection';
 import { confirmDialog } from './shareView';
 import { t, getLanguage, setLanguage, LANGUAGES } from '../i18n';
 
-export function lockSession(ctx: AppContext): void {
+export async function lockSession(ctx: AppContext): Promise<void> {
+  await ctx.onLock?.();
   clearSession();
   ctx.navigate('/');
 }
@@ -98,12 +99,10 @@ async function unlockOffline(ctx: AppContext, email: string, wrapKey: CryptoKey)
   return true;
 }
 
-async function maybeEnableBiometric(ctx: AppContext, password: string): Promise<void> {
-  const control = ctx.biometricControl;
-  if (!control) return;
-  if (await control.isEnabled()) return;
+async function sealDeviceUnlock(ctx: AppContext, password: string): Promise<void> {
+  if (!ctx.sealDeviceUnlock) return;
   try {
-    await control.enable(password);
+    await ctx.sealDeviceUnlock(password);
   } catch (err) {
     console.error('Could not store this device unlock key; Memoza will keep asking for the password.', err);
   }
@@ -114,7 +113,7 @@ async function unlockWithPassword(ctx: AppContext, email: string, password: stri
 
   if (!navigator.onLine) {
     if (await unlockOffline(ctx, email, wrapKey)) {
-      await maybeEnableBiometric(ctx, password);
+      await sealDeviceUnlock(ctx, password);
       return;
     }
     throw new Error(t('auth.offlineNoCachedAccount'));
@@ -125,7 +124,7 @@ async function unlockWithPassword(ctx: AppContext, email: string, password: stri
     result = await authApi.login(email, authHash);
   } catch (err) {
     if (!(err instanceof ApiError) && (await unlockOffline(ctx, email, wrapKey))) {
-      await maybeEnableBiometric(ctx, password);
+      await sealDeviceUnlock(ctx, password);
       return;
     }
     throw err;
@@ -153,7 +152,7 @@ async function unlockWithPassword(ctx: AppContext, email: string, password: stri
     wrappedDek: result.wrapped_dek,
     wrappedPrivateKey: result.wrapped_private_key,
   });
-  await maybeEnableBiometric(ctx, password);
+  await sealDeviceUnlock(ctx, password);
 
   ctx.navigate('/');
 }

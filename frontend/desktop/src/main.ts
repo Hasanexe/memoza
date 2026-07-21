@@ -9,9 +9,9 @@ import {
   biometricUnlockProvider,
   saveLocalAccount,
   clearLocalAccount,
-  enableBiometricUnlock,
-  disableBiometricUnlock,
-  isBiometricEnabled,
+  sealDeviceUnlock,
+  lockDevice,
+  ensureOnline,
   getLocalAccountFor,
 } from './unlock';
 import { wipeLocalStore } from './store/db';
@@ -28,9 +28,28 @@ if (!root) throw new Error('Missing #app root element');
 await initLanguage();
 
 const store = createSqliteStore();
+
+let pendingDeepLink: string | null = null;
+
+function openDeepLink(url: string): void {
+  if (isUnlocked()) {
+    void resolveDeepLink(store, url).then(target => {
+      location.hash = target;
+    });
+  } else {
+    pendingDeepLink = url;
+  }
+}
+
 const app = mountApp(root, store, {
   platform: 'native',
   unlockProvider: biometricUnlockProvider,
+  takePendingRoute: async () => {
+    if (!pendingDeepLink) return null;
+    const url = pendingDeepLink;
+    pendingDeepLink = null;
+    return resolveDeepLink(store, url);
+  },
   onUnlock: async session => {
     await saveLocalAccount(session.userId, session.email, session.username, session.wrappedDek, session.wrappedPrivateKey);
   },
@@ -38,38 +57,30 @@ const app = mountApp(root, store, {
     await clearLocalAccount();
     await wipeLocalStore();
   },
-  biometricControl: {
-    isEnabled: () => isBiometricEnabled(),
-    enable: password => enableBiometricUnlock(password, requireSession().email),
-    disable: () => disableBiometricUnlock(),
-  },
+  sealDeviceUnlock: password => sealDeviceUnlock(password, requireSession().email),
+  onLock: () => lockDevice(),
   createShortcut: (pageNo, title) => createPageShortcut(pageNo, title),
   localAccount: getLocalAccountFor,
 });
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !isUnlocked()) return;
-  void drainQueue();
-  app.refresh();
+  void ensureOnline()
+    .then(() => drainQueue())
+    .then(() => app.refresh());
 });
 window.addEventListener('online', () => {
   if (!isUnlocked()) return;
-  void drainQueue()
+  void ensureOnline()
+    .then(() => drainQueue())
     .then(() => store.sync(true))
     .then(() => app.refresh());
 });
 
 void onOpenUrl(urls => {
-  for (const url of urls) {
-    void resolveDeepLink(store, url).then(target => {
-      location.hash = target;
-    });
-  }
+  for (const url of urls) openDeepLink(url);
 });
 
 void takePendingMmpUrl().then(url => {
-  if (!url) return;
-  void resolveDeepLink(store, url).then(target => {
-    location.hash = target;
-  });
+  if (url) openDeepLink(url);
 });

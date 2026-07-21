@@ -66,7 +66,7 @@ export function renderSidebar(ctx: AppContext, active: SidebarSection): SidebarC
       { type: 'button', class: 'rail-link rail-lock', 'aria-label': t('nav.lock'), title: t('nav.lock') },
       icon('lock')
     );
-    lockBtn.addEventListener('click', () => lockSession(ctx));
+    lockBtn.addEventListener('click', () => void lockSession(ctx));
     footer.append(lockBtn);
   }
 

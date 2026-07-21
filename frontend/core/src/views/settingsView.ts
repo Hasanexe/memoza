@@ -41,7 +41,6 @@ export function renderSettings(ctx: AppContext): void {
       renderThemeSection(),
       renderLanguageSection(),
       renderPasswordSection(),
-      ctx.biometricControl ? renderBiometricSection(ctx.biometricControl) : null,
       renderExportSection(),
       renderImportSection(),
       renderDeleteSection()
@@ -184,50 +183,6 @@ export function renderSettings(ctx: AppContext): void {
       h('label', {}, t('auth.newPasswordMinHint', { min: MIN_PASSWORD_LENGTH }), newInput),
       h('label', {}, t('auth.confirmNewPassword'), confirmInput),
       submitBtn,
-      statusHost
-    );
-  }
-
-  function renderBiometricSection(control: NonNullable<AppContext['biometricControl']>): HTMLElement {
-    const passwordInput = h('input', { type: 'password', placeholder: t('settings.currentPassword') }) as HTMLInputElement;
-    const statusHost = h('div', {});
-    const enableBtn = h('button', { type: 'button', class: 'primary' }, t('settings.enable'));
-    const disableBtn = h('button', { type: 'button', class: 'hidden' }, t('settings.disable'));
-
-    void control.isEnabled().then(enabled => {
-      enableBtn.classList.toggle('hidden', enabled);
-      disableBtn.classList.toggle('hidden', !enabled);
-    });
-
-    enableBtn.addEventListener('click', async () => {
-      clear(statusHost);
-      try {
-        await control.enable(passwordInput.value);
-        passwordInput.value = '';
-        enableBtn.classList.add('hidden');
-        disableBtn.classList.remove('hidden');
-        statusHost.append(infoBanner(t('settings.biometricEnabled')));
-      } catch (err) {
-        statusHost.append(errorBanner(err instanceof ApiError ? err.message : t('settings.biometricEnableFailed')));
-      }
-    });
-
-    disableBtn.addEventListener('click', async () => {
-      clear(statusHost);
-      await control.disable();
-      disableBtn.classList.add('hidden');
-      enableBtn.classList.remove('hidden');
-      statusHost.append(infoBanner(t('settings.biometricDisabled')));
-    });
-
-    return h(
-      'section',
-      {},
-      h('h2', {}, t('settings.skipPasswordTitle')),
-      h('p', {}, t('settings.skipPasswordBody')),
-      h('label', {}, t('settings.currentPassword'), passwordInput),
-      enableBtn,
-      disableBtn,
       statusHost
     );
   }

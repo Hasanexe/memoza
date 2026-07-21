@@ -35,7 +35,7 @@ const MIGRATIONS = [
     username TEXT NOT NULL DEFAULT '',
     wrapped_dek TEXT NOT NULL,
     wrapped_private_key TEXT NOT NULL,
-    biometric_enabled INTEGER NOT NULL DEFAULT 0
+    locked INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS write_queue (
     id TEXT PRIMARY KEY,
@@ -54,6 +54,8 @@ const ALTER_STATEMENTS = [
   'ALTER TABLE local_note ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0',
   "ALTER TABLE local_account ADD COLUMN username TEXT NOT NULL DEFAULT ''",
   'ALTER TABLE write_queue ADD COLUMN failed INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE local_account ADD COLUMN locked INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE local_account DROP COLUMN biometric_enabled',
 ];
 
 let dbPromise: Promise<Database> | null = null;

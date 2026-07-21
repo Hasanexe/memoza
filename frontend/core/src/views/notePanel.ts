@@ -2,7 +2,7 @@ import { h, clear, errorBanner, icon, showToast } from './dom';
 import type { AppContext } from './app';
 import type { DecryptedNoteSummary } from '../store/types';
 import { PIN_TAG } from './tagsEditor';
-import { contentTags, getColor, CONTROL_KEYS } from './controlTags';
+import { contentTags, getColor, CONTROL_KEYS, COLOR_VARS } from './controlTags';
 import { confirmRestorePublished, confirmDialog } from './shareView';
 import { t } from '../i18n';
 
@@ -17,15 +17,6 @@ export interface NotePanel {
   refresh(): void;
 }
 
-const COLOR_VARS: Record<string, string> = {
-  red: 'var(--danger)',
-  orange: 'var(--clay)',
-  yellow: 'var(--gold-strong)',
-  green: 'var(--success)',
-  blue: '#3F72AF',
-  purple: 'var(--shared)',
-};
-
 function colorTag(name: string): string {
   return `color:${name}`;
 }
@@ -38,6 +29,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
   let query = '';
   let tagFilters = new Set<string>();
   let chipEls: { key: string; el: HTMLElement }[] = [];
+  let cachedEntries: DecryptedNoteSummary[] = [];
   const rowEls = new Map<string, HTMLElement>();
 
   const statusHost = h('p', { class: 'sidebar-status hidden' }, '');
@@ -45,11 +37,24 @@ export function createNotePanel(ctx: AppContext): NotePanel {
   const searchInput = h('input', { type: 'search', placeholder: t('notePanel.searchPlaceholder') }) as HTMLInputElement;
   searchInput.addEventListener('input', () => {
     query = searchInput.value;
-    void renderNoteList();
+    void reload();
   });
 
   const tagSearchInput = h('input', { type: 'text', class: 'tag-search-input', placeholder: t('notePanel.filterTagsPlaceholder') }) as HTMLInputElement;
-  const tagsHost = h('div', { class: 'tag-chips' }, tagSearchInput);
+  const clearFiltersBtn = h(
+    'button',
+    { type: 'button', class: 'tag-clear', 'aria-label': t('common.close'), title: t('common.close') },
+    icon('x', 14)
+  ) as HTMLButtonElement;
+  clearFiltersBtn.addEventListener('click', () => {
+    if (tagFilters.size === 0) return;
+    tagFilters.clear();
+    tagSearchInput.value = '';
+    applyTagSearchFilter();
+    updateChipActive();
+    renderRows();
+  });
+  const tagsHost = h('div', { class: 'tag-chips' }, tagSearchInput, clearFiltersBtn);
   const tagsExpandBtn = h('button', { type: 'button', class: 'tag-chips-expand hidden' }, t('notePanel.showMore'));
   const tagsWrap = h('div', { class: 'tag-chips-wrap' }, tagsHost, tagsExpandBtn);
   const listHost = h('div', { class: 'note-list' });
@@ -57,7 +62,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
   const root = h('div', { class: 'sidebar-body' }, statusHost, searchInput, tagsWrap, listHost);
 
   function rebuildChips(chips: HTMLElement[]): void {
-    while (tagsHost.lastChild && tagsHost.lastChild !== tagSearchInput) tagsHost.removeChild(tagsHost.lastChild);
+    while (tagsHost.lastChild && tagsHost.lastChild !== clearFiltersBtn) tagsHost.removeChild(tagsHost.lastChild);
     for (const c of chips) tagsHost.append(c);
     tagsHost.scrollTop = 0;
   }
@@ -103,11 +108,22 @@ export function createNotePanel(ctx: AppContext): NotePanel {
     e.preventDefault();
     const match = chipEls.find(c => !c.el.classList.contains('hidden'));
     if (!match) return;
-    if (tagFilters.has(match.key)) tagFilters.delete(match.key);
-    else tagFilters.add(match.key);
+    toggleFilter(match.key);
     tagSearchInput.value = '';
-    void renderNoteList();
+    applyTagSearchFilter();
   });
+
+  function toggleFilter(key: string): void {
+    if (tagFilters.has(key)) tagFilters.delete(key);
+    else tagFilters.add(key);
+    updateChipActive();
+    renderRows();
+  }
+
+  function updateChipActive(): void {
+    for (const { key, el } of chipEls) el.classList.toggle('active', tagFilters.has(key));
+    clearFiltersBtn.disabled = tagFilters.size === 0;
+  }
 
   async function currentSet(): Promise<DecryptedNoteSummary[]> {
     const all = query ? await store.search(query) : await store.listNotes();
@@ -138,11 +154,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
         { type: 'button', class: tagFilters.has(key) ? 'chip chip--pin active' : 'chip chip--pin', 'aria-label': t('common.pin'), title: t('common.pin') },
         icon('pin', 14)
       );
-      el.addEventListener('click', () => {
-        if (tagFilters.has(key)) tagFilters.delete(key);
-        else tagFilters.add(key);
-        void renderNoteList();
-      });
+      el.addEventListener('click', () => toggleFilter(key));
       chips.push({ key, el });
     }
 
@@ -155,21 +167,13 @@ export function createNotePanel(ctx: AppContext): NotePanel {
         title: name,
       }) as HTMLButtonElement;
       el.style.setProperty('--tag-color', COLOR_VARS[name] ?? 'var(--clay)');
-      el.addEventListener('click', () => {
-        if (tagFilters.has(key)) tagFilters.delete(key);
-        else tagFilters.add(key);
-        void renderNoteList();
-      });
+      el.addEventListener('click', () => toggleFilter(key));
       chips.push({ key, el });
     }
 
     for (const tag of Array.from(contentSet).sort()) {
       const el = h('button', { type: 'button', class: tagFilters.has(tag) ? 'chip active' : 'chip' }, tag);
-      el.addEventListener('click', () => {
-        if (tagFilters.has(tag)) tagFilters.delete(tag);
-        else tagFilters.add(tag);
-        void renderNoteList();
-      });
+      el.addEventListener('click', () => toggleFilter(tag));
       chips.push({ key: tag, el });
     }
 
@@ -214,7 +218,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
         const doRestore = (): void => {
           void store.restoreNote(note.id).then(() => {
             showToast(t('notePanel.pageRestored'));
-            return renderNoteList();
+            return reload();
           });
         };
         if (note.isPublic) confirmRestorePublished(doRestore);
@@ -226,7 +230,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
         confirmDialog(t('notePanel.deleteForever'), t('notePanel.deleteForeverConfirmBody'), t('notePanel.deleteForever'), () => {
           void store.purgeNote(note.id).then(() => {
             showToast(t('notePanel.pagePermanentlyDeleted'));
-            return renderNoteList();
+            return reload();
           });
         });
       });
@@ -236,19 +240,23 @@ export function createNotePanel(ctx: AppContext): NotePanel {
     return row;
   }
 
-  async function renderNoteList(): Promise<void> {
-    clear(listHost);
-    rowEls.clear();
-    let entries = await currentSet();
-
-    chipEls = buildChips(entries);
+  async function reload(): Promise<void> {
+    cachedEntries = await currentSet();
+    chipEls = buildChips(cachedEntries);
     rebuildChips(chipEls.map(c => c.el));
     applyTagSearchFilter();
+    updateChipActive();
+    renderRows();
+  }
 
+  function renderRows(): void {
+    clear(listHost);
+    rowEls.clear();
+
+    let entries = cachedEntries;
     if (tagFilters.size > 0) {
       entries = entries.filter(n => Array.from(tagFilters).every(key => n.tags.includes(key)));
     }
-
     entries = entries.slice().sort((a, b) => b.updatedAt - a.updatedAt);
 
     if (entries.length === 0) {
@@ -266,7 +274,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
   async function loadAndSync(): Promise<void> {
     const hasCached = (await store.listNotes()).length > 0;
     if (hasCached) {
-      await renderNoteList();
+      await reload();
     } else {
       statusHost.textContent = t('syncStatus.syncing');
       statusHost.classList.remove('hidden');
@@ -279,7 +287,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
       return;
     }
     statusHost.classList.add('hidden');
-    await renderNoteList();
+    await reload();
   }
 
   function mount(host: HTMLElement): void {
@@ -288,7 +296,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
 
   function setSection(section: NotePanelSection): void {
     tab = section;
-    void renderNoteList();
+    void reload();
   }
 
   function setOpenNote(id: string | null): void {

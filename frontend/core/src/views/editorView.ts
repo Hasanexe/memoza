@@ -7,7 +7,7 @@ import { requireSession } from '../crypto/session';
 import { lockSession } from './authViews';
 import { renderTagsEditor } from './tagsEditor';
 import type { SidebarSection } from './sidebar';
-import { getFormat } from './controlTags';
+import { getFormat, getColor, COLOR_VARS } from './controlTags';
 import { connectionStatus, onConnectionChange, markSaveState } from '../connection';
 import { createSyncStatus } from './syncStatus';
 import { t } from '../i18n';
@@ -153,13 +153,22 @@ function renderEditorForm(
   }
 
   const tagsEditor = renderTagsEditor(note?.tags ?? [], readOnly, (_tags, immediate) => {
+    applyColorAccent();
     if (immediate) void save(false, true);
     else scheduleSave();
   });
 
+  function applyColorAccent(): void {
+    const colorName = getColor(tagsEditor.getTags());
+    const colorVar = colorName ? (COLOR_VARS[colorName] ?? null) : null;
+    content.classList.toggle('editor-view--color', colorVar !== null);
+    if (colorVar) content.style.setProperty('--tag-color', colorVar);
+    else content.style.removeProperty('--tag-color');
+  }
+
   const pageBarHost = h('div', { class: 'page-bar' });
   const pageBarSection = h('div', { class: 'page-bar-bottom hidden' }, pageBarHost);
-  const publicBadgeHost = h('div', {});
+  const publicBadgeHost = h('div', { class: 'public-badge-slot' });
 
   async function refreshPageBar(): Promise<void> {
     if (!currentId || readOnly || currentPageNo === null) {
@@ -538,7 +547,7 @@ function renderEditorForm(
       { type: 'button', class: 'icon-btn ghost editor-lock', 'aria-label': t('nav.lock'), title: t('nav.lock') },
       icon('lock')
     );
-    btn.addEventListener('click', () => lockSession(ctx));
+    btn.addEventListener('click', () => void lockSession(ctx));
     lockBtn = btn;
   }
 
@@ -575,6 +584,7 @@ function renderEditorForm(
 
   clear(main);
   main.append(content);
+  applyColorAccent();
 
   if (pageNavScroll !== null) {
     const y = pageNavScroll;
