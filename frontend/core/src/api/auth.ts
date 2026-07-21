@@ -2,7 +2,7 @@ import { request } from './client';
 
 export interface RegisterRequest {
   email: string;
-  name: string;
+  language: string;
   password: string;
   kdf_iterations: number;
   public_key: string;
@@ -24,6 +24,7 @@ export interface LoginResponse extends TokenResponse {
   wrapped_dek: string;
   wrapped_private_key: string;
   username: string;
+  language: string;
 }
 
 export function register(body: RegisterRequest): Promise<{ ok: true }> {
@@ -63,6 +64,10 @@ export interface ChangePasswordRequest {
 
 export function changePassword(body: ChangePasswordRequest): Promise<TokenResponse> {
   return request('/auth/password', { method: 'PUT', body: JSON.stringify(body) });
+}
+
+export function updateLanguage(language: string): Promise<{ ok: true; language: string }> {
+  return request('/auth/language', { method: 'PUT', body: JSON.stringify({ language }) });
 }
 
 export function requestReset(email: string): Promise<{ ok: true }> {

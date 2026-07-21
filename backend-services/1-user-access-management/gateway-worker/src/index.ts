@@ -1,6 +1,6 @@
 import { errors } from 'jose';
 import { verifyToken, handlePreflight, addCors, withSecurityHeaders, isValidUsernameFormat } from '@memoza/shared';
-import type { AccessClaims, Role } from '@memoza/shared';
+import type { AccessClaims } from '@memoza/shared';
 
 const PUBLIC_PAGE_RE = /^\/public\/([^/]+)\/([^/]+)$/;
 const PAGE_NO_RE = /^\d+$/;
@@ -24,10 +24,6 @@ function respond(response: Response, request: Request, env: GatewayEnv, cacheCon
   return addCors(withSecurityHeaders(response, cacheControl), request, env.CORS_ALLOWED_ORIGINS);
 }
 
-function checkRbac(_pathname: string, role: Role): boolean {
-  return role === 'Editor';
-}
-
 function resolveBinding(env: GatewayEnv, pathname: string): Fetcher | null {
   if (pathname.startsWith('/notes/internal/')) return null;
   if (pathname === '/notes' || pathname.startsWith('/notes/')) return env.NOTES;
@@ -40,7 +36,6 @@ function identityHeaders(request: Request, claims: AccessClaims): Headers {
   headers.delete('X-User-Id');
   headers.delete('X-User-Role');
   headers.set('X-User-Id', claims.user_id);
-  headers.set('X-User-Role', claims.role);
   return headers;
 }
 
@@ -98,10 +93,6 @@ export default {
     } catch (err: unknown) {
       const expired = err instanceof errors.JWTExpired;
       return respond(json({ error: expired ? 'Token expired' : 'Unauthorized' }, 401), request, env, 'no-store');
-    }
-
-    if (!checkRbac(pathname, claims.role)) {
-      return respond(json({ error: 'Forbidden' }, 403), request, env, 'no-store');
     }
 
     if (request.method === 'GET' && pathname === '/users/public-key') {

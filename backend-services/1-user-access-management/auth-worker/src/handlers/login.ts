@@ -19,18 +19,18 @@ export async function handleLogin(request: Request, env: AuthEnv): Promise<Respo
   }
 
   const user = await env.DB.prepare(
-    'SELECT id, password_hash, role, active, kdf_iterations, wrapped_dek, wrapped_private_key, username FROM users WHERE email = ?'
+    'SELECT id, password_hash, active, kdf_iterations, wrapped_dek, wrapped_private_key, username, language FROM users WHERE email = ?'
   )
     .bind(email.toLowerCase())
     .first<{
       id: string;
       password_hash: string;
-      role: string;
       active: number;
       kdf_iterations: number;
       wrapped_dek: string;
       wrapped_private_key: string;
       username: string | null;
+      language: string;
     }>();
 
   if (!user) return json({ error: INVALID }, 401);
@@ -40,10 +40,7 @@ export async function handleLogin(request: Request, env: AuthEnv): Promise<Respo
 
   if (user.active !== 1) return json({ error: 'Not activated' }, 403);
 
-  const { accessToken, refreshCookie } = await issueTokens(env, {
-    id: user.id,
-    role: user.role as 'Editor',
-  });
+  const { accessToken, refreshCookie } = await issueTokens(env, { id: user.id });
 
   return new Response(
     JSON.stringify({
@@ -53,6 +50,7 @@ export async function handleLogin(request: Request, env: AuthEnv): Promise<Respo
       wrapped_dek: user.wrapped_dek,
       wrapped_private_key: user.wrapped_private_key,
       username: user.username,
+      language: user.language,
     }),
     {
       status: 200,

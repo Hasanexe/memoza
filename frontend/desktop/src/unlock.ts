@@ -4,7 +4,7 @@ import { unwrapDek, unwrapPrivateKey } from '@memoza/core/crypto/keys';
 import { setSession } from '@memoza/core/crypto/session';
 import { fromBase64, toBase64 } from '@memoza/core/crypto/codec';
 import type { UnlockProvider, LocalAccountSnapshot } from '@memoza/core/views/app';
-import { getDb } from './store/db';
+import { getDb, wipeLocalStore } from './store/db';
 
 const SERVICE = 'io.memoza.desktop';
 const ACCOUNT = 'wrapkey';
@@ -26,13 +26,21 @@ export async function saveLocalAccount(
   wrappedDek: string,
   wrappedPrivateKey: string
 ): Promise<void> {
+  const existing = await getLocalAccount();
+  if (existing && existing.user_id !== userId) {
+    await invoke('clear_secret', { service: SERVICE, account: ACCOUNT }).catch(() => undefined);
+    await wipeLocalStore();
+  }
+
   const db = await getDb();
   await db.execute(
     `INSERT INTO local_account (id, user_id, email, username, wrapped_dek, wrapped_private_key, biometric_enabled)
      VALUES (1, ?, ?, ?, ?, ?, 0)
      ON CONFLICT (id) DO UPDATE SET
        user_id = excluded.user_id, email = excluded.email, username = excluded.username,
-       wrapped_dek = excluded.wrapped_dek, wrapped_private_key = excluded.wrapped_private_key`,
+       wrapped_dek = excluded.wrapped_dek, wrapped_private_key = excluded.wrapped_private_key,
+       biometric_enabled = CASE WHEN local_account.user_id = excluded.user_id
+                                THEN local_account.biometric_enabled ELSE 0 END`,
     [userId, email, username, wrappedDek, wrappedPrivateKey]
   );
 }

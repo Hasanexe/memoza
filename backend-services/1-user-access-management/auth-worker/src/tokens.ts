@@ -1,5 +1,4 @@
 import { signAccessToken } from '@memoza/shared';
-import type { Role } from '@memoza/shared';
 
 export function toBase64Url(buf: ArrayBuffer): string {
   return btoa(String.fromCharCode(...new Uint8Array(buf)))
@@ -57,11 +56,10 @@ export async function issueTokens(
     REFRESH_TOKEN_MAX_AGE_S: string;
     MAX_REFRESH_TOKENS_PER_USER: string;
   },
-  user: { id: string; role: Role }
+  user: { id: string }
 ): Promise<{ accessToken: string; refreshCookie: string }> {
   const accessToken = await signAccessToken(env.JWT_PRIVATE_KEY, {
     user_id: user.id,
-    role: user.role,
   });
 
   const rawBytes = crypto.getRandomValues(new Uint8Array(32));

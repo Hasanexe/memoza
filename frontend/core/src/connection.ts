@@ -1,14 +1,16 @@
 import { getAccessToken } from './crypto/session';
 
 export type ConnectionStatus = 'offline' | 'syncing' | 'synced';
+export type SaveState = 'idle' | 'unsaved' | 'saving' | 'error';
 
 interface State {
   lastSyncAt: number | null;
   pendingCount: number;
   syncing: boolean;
+  saveState: SaveState;
 }
 
-let state: State = { lastSyncAt: null, pendingCount: 0, syncing: false };
+let state: State = { lastSyncAt: null, pendingCount: 0, syncing: false, saveState: 'idle' };
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -25,15 +27,31 @@ export function markSyncing(active: boolean): void {
   emit();
 }
 
+export function markSynced(): void {
+  state = { ...state, lastSyncAt: Date.now() };
+  emit();
+}
+
+export function markSaveState(saveState: SaveState): void {
+  if (state.saveState === saveState) return;
+  state = { ...state, saveState };
+  emit();
+}
+
 export function setPendingCount(count: number): void {
   state = { ...state, pendingCount: count };
   emit();
 }
 
-export function connectionStatus(): { status: ConnectionStatus; pendingCount: number; lastSyncAt: number | null } {
+export function connectionStatus(): {
+  status: ConnectionStatus;
+  pendingCount: number;
+  lastSyncAt: number | null;
+  saveState: SaveState;
+} {
   const online = navigator.onLine && getAccessToken() !== null;
   const status: ConnectionStatus = !online ? 'offline' : state.syncing ? 'syncing' : 'synced';
-  return { status, pendingCount: state.pendingCount, lastSyncAt: state.lastSyncAt };
+  return { status, pendingCount: state.pendingCount, lastSyncAt: state.lastSyncAt, saveState: state.saveState };
 }
 
 window.addEventListener('online', emit);

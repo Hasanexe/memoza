@@ -3,7 +3,7 @@ import { ApiError } from '@memoza/core/api/client';
 import * as noteCrypto from '@memoza/core/crypto/note';
 import { requireSession } from '@memoza/core/crypto/session';
 import { getFormat } from '@memoza/core/views/controlTags';
-import { setPendingCount } from '@memoza/core/connection';
+import { setPendingCount, markSynced } from '@memoza/core/connection';
 import { getDb } from './db';
 
 export type QueueOp =
@@ -14,7 +14,6 @@ export type QueueOp =
       title_ct: string;
       body_ct: string;
       tags_ct: string | null;
-      base_rev: number;
       isPublic: boolean;
     }
   | { kind: 'trash'; noteId: string }
@@ -31,9 +30,33 @@ async function refreshPendingCount(): Promise<void> {
   setPendingCount(rows[0]?.count ?? 0);
 }
 
+export async function pendingWriteCount(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select<{ count: number }[]>('SELECT COUNT(*) as count FROM write_queue');
+  return rows[0]?.count ?? 0;
+}
+
 export async function enqueue(op: QueueOp): Promise<void> {
   const db = await getDb();
   const noteId = 'noteId' in op ? op.noteId : null;
+
+  if (op.kind === 'update') {
+    const pending = await db.select<{ id: string }[]>(
+      "SELECT id FROM write_queue WHERE kind = 'update' AND note_id = ? AND failed = 0 ORDER BY created_at ASC",
+      [op.noteId]
+    );
+    const supersedable = pending.find(r => r.id !== inFlightId);
+    if (supersedable) {
+      await db.execute('UPDATE write_queue SET payload_json = ? WHERE id = ?', [
+        JSON.stringify(op),
+        supersedable.id,
+      ]);
+      await refreshPendingCount();
+      void drainQueue();
+      return;
+    }
+  }
+
   await db.execute(
     'INSERT INTO write_queue (id, kind, note_id, payload_json, created_at, attempts) VALUES (?, ?, ?, ?, ?, 0)',
     [crypto.randomUUID(), op.kind, noteId, JSON.stringify(op), Date.now()]
@@ -43,8 +66,19 @@ export async function enqueue(op: QueueOp): Promise<void> {
 }
 
 let draining = false;
+let inFlightId: string | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
-const RETRY_DELAY_MS = 15_000;
+const RETRY_BASE_MS = 15_000;
+const RETRY_MAX_MS = 300_000;
+const UNRETRYABLE_STATUSES = [400, 403, 404, 409, 413, 422];
+
+function isUnretryable(err: unknown): boolean {
+  return err instanceof ApiError && UNRETRYABLE_STATUSES.includes(err.status);
+}
+
+function backoffFor(attempts: number): number {
+  return Math.min(RETRY_BASE_MS * 2 ** (attempts - 1), RETRY_MAX_MS);
+}
 
 export async function drainQueue(): Promise<void> {
   if (draining) return;
@@ -56,24 +90,39 @@ export async function drainQueue(): Promise<void> {
   try {
     const db = await getDb();
     for (;;) {
-      const rows = await db.select<{ id: string; payload_json: string }[]>(
-        'SELECT id, payload_json FROM write_queue ORDER BY created_at ASC LIMIT 1'
+      const rows = await db.select<{ id: string; payload_json: string; attempts: number }[]>(
+        'SELECT id, payload_json, attempts FROM write_queue WHERE failed = 0 ORDER BY created_at ASC LIMIT 1'
       );
       if (rows.length === 0) break;
       const row = rows[0];
       const op = JSON.parse(row.payload_json) as QueueOp;
+      inFlightId = row.id;
       try {
         await applyOp(op);
         await db.execute('DELETE FROM write_queue WHERE id = ?', [row.id]);
         await refreshPendingCount();
+        markSynced();
       } catch (err) {
-        await db.execute('UPDATE write_queue SET attempts = attempts + 1, last_error = ? WHERE id = ?', [
-          err instanceof Error ? err.message : 'Unknown error',
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        const attempts = row.attempts + 1;
+        if (isUnretryable(err)) {
+          await db.execute(
+            'UPDATE write_queue SET attempts = ?, last_error = ?, failed = 1 WHERE id = ?',
+            [attempts, message, row.id]
+          );
+          await refreshPendingCount();
+          continue;
+        }
+        await db.execute('UPDATE write_queue SET attempts = ?, last_error = ? WHERE id = ?', [
+          attempts,
+          message,
           row.id,
         ]);
         await refreshPendingCount();
-        retryTimer = setTimeout(() => void drainQueue(), RETRY_DELAY_MS);
+        retryTimer = setTimeout(() => void drainQueue(), backoffFor(attempts));
         break;
+      } finally {
+        inFlightId = null;
       }
     }
   } finally {
@@ -172,14 +221,20 @@ async function applyOp(op: QueueOp): Promise<void> {
     }
     case 'update':
       try {
+        const db = await getDb();
+        const rows = await db.select<{ rev: number }[]>('SELECT rev FROM local_note WHERE id = ?', [op.noteId]);
+        const baseRev = rows[0]?.rev;
+        if (baseRev === undefined) return;
+
         const mirror = op.isPublic ? await attachPublishedMirror(op.noteId, op.title_ct, op.body_ct, op.tags_ct) : {};
-        await notesApi.updateNote(op.noteId, {
+        const updated = await notesApi.updateNote(op.noteId, {
           title_ct: op.title_ct,
           body_ct: op.body_ct,
           tags_ct: op.tags_ct,
-          base_rev: op.base_rev,
+          base_rev: baseRev,
           ...mirror,
         });
+        await db.execute('UPDATE local_note SET rev = ? WHERE id = ?', [updated.rev, op.noteId]);
       } catch (err) {
         if (err instanceof ApiError && err.status === 409 && err.body && typeof err.body === 'object' && 'note' in err.body) {
           await forkConflictingUpdate(op, (err.body as { note: notesApi.FullNote }).note);

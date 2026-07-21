@@ -25,9 +25,17 @@ import { pemToDer, toBase64, fromUtf8 } from '../crypto/codec';
 import { ESCROW_PUBLIC_KEY_PEM, MIN_PASSWORD_LENGTH, KDF_ITERATIONS, EMAIL_STORAGE_KEY } from '../config';
 import { connectionStatus } from '../connection';
 import { confirmDialog } from './shareView';
+import { t, getLanguage, setLanguage, LANGUAGES } from '../i18n';
 
-export function performLogout(ctx: AppContext): void {
-  const { pendingCount } = connectionStatus();
+export function lockSession(ctx: AppContext): void {
+  clearSession();
+  ctx.navigate('/');
+}
+
+export async function performLogout(ctx: AppContext): Promise<void> {
+  const pendingCount = ctx.store.pendingWriteCount
+    ? await ctx.store.pendingWriteCount().catch(() => 0)
+    : connectionStatus().pendingCount;
 
   function doLogout(): void {
     void (async () => {
@@ -39,13 +47,17 @@ export function performLogout(ctx: AppContext): void {
     })();
   }
 
+  const localWarning = ctx.platform === 'native' ? t('auth.logoutLocalWarningSuffix') : '';
+
   if (pendingCount > 0) {
     confirmDialog(
-      'Log out?',
-      `This device has ${pendingCount} change${pendingCount === 1 ? '' : 's'} that ${pendingCount === 1 ? "hasn't" : "haven't"} synced yet. Logging out now will lose ${pendingCount === 1 ? 'it' : 'them'}.`,
-      'Log out anyway',
+      t('auth.logoutConfirmTitle'),
+      t(pendingCount === 1 ? 'auth.logoutWarningOne' : 'auth.logoutWarningMany', { count: pendingCount, localWarning }),
+      t('auth.logoutAnyway'),
       doLogout
     );
+  } else if (ctx.platform === 'native') {
+    confirmDialog(t('auth.logoutConfirmTitle'), t('auth.logoutNativeWarningBody'), t('auth.logOut'), doLogout);
   } else {
     doLogout();
   }
@@ -90,7 +102,11 @@ async function maybeEnableBiometric(ctx: AppContext, password: string): Promise<
   const control = ctx.biometricControl;
   if (!control) return;
   if (await control.isEnabled()) return;
-  await control.enable(password).catch(() => undefined);
+  try {
+    await control.enable(password);
+  } catch (err) {
+    console.error('Could not store this device unlock key; Memoza will keep asking for the password.', err);
+  }
 }
 
 async function unlockWithPassword(ctx: AppContext, email: string, password: string): Promise<void> {
@@ -101,7 +117,7 @@ async function unlockWithPassword(ctx: AppContext, email: string, password: stri
       await maybeEnableBiometric(ctx, password);
       return;
     }
-    throw new Error("You're offline and no cached account was found on this device.");
+    throw new Error(t('auth.offlineNoCachedAccount'));
   }
 
   let result;
@@ -116,6 +132,7 @@ async function unlockWithPassword(ctx: AppContext, email: string, password: stri
   }
   setAccessToken(result.access_token);
   if (ctx.rememberEmail !== false) localStorage.setItem(EMAIL_STORAGE_KEY, email);
+  void setLanguage(result.language);
 
   const dek = await unwrapDek(wrapKey, result.wrapped_dek);
   const privateKey = await unwrapPrivateKey(wrapKey, result.wrapped_private_key);
@@ -149,19 +166,15 @@ function renderCheckEmailScreen(ctx: AppContext): void {
       'div',
       { class: 'auth-view' },
       brand(),
-      h('h1', {}, 'Check your email'),
-      h(
-        'p',
-        {},
-        "We've sent an activation link to your email address. Open it to pick your username and finish setting up your account."
-      ),
+      h('h1', {}, t('auth.checkEmailTitle')),
+      h('p', {}, t('auth.checkEmailBody')),
       h(
         'button',
         {
           type: 'button',
           onclick: () => navigate('/login'),
         },
-        'Go to login'
+        t('auth.goToLogin')
       )
     )
   );
@@ -172,18 +185,16 @@ function renderRecoveryKeyScreen(ctx: AppContext, recoveryKey: string): void {
   clear(root);
 
   const ack = h('input', { type: 'checkbox' }) as HTMLInputElement;
-  const continueBtn = h('button', { type: 'button', disabled: 'true' }, 'Continue') as HTMLButtonElement;
+  const continueBtn = h('button', { type: 'button', disabled: 'true' }, t('auth.continue')) as HTMLButtonElement;
   ack.addEventListener('change', () => {
     continueBtn.disabled = !ack.checked;
   });
   continueBtn.addEventListener('click', () => renderCheckEmailScreen(ctx));
 
-  const downloadBtn = h('button', { type: 'button' }, 'Download recovery key');
+  const downloadBtn = h('button', { type: 'button' }, t('auth.downloadRecoveryKey'));
   downloadBtn.addEventListener('click', () => {
     const blob = new Blob(
-      [
-        `Memoza recovery key\n\n${recoveryKey}\n\nWithout your password AND this key, your notes cannot be recovered — not even by Memoza. Keep it somewhere safe.`,
-      ],
+      [`${t('auth.recoveryKeyFileHeader')}\n\n${recoveryKey}\n\n${t('auth.recoveryKeyFileBody')}`],
       { type: 'text/plain' }
     );
     const url = URL.createObjectURL(blob);
@@ -199,15 +210,11 @@ function renderRecoveryKeyScreen(ctx: AppContext, recoveryKey: string): void {
       'div',
       { class: 'auth-view' },
       brand(),
-      h('h1', {}, 'Save your recovery key'),
-      h(
-        'p',
-        {},
-        'This is the only time this key will be shown. Without your password AND this key, your notes cannot be recovered — not even by Memoza.'
-      ),
+      h('h1', {}, t('auth.saveRecoveryKeyTitle')),
+      h('p', {}, t('auth.saveRecoveryKeyBody')),
       h('pre', { class: 'recovery-key' }, recoveryKey),
       downloadBtn,
-      h('label', { class: 'checkbox-label' }, ack, ' I have saved this recovery key somewhere safe.'),
+      h('label', { class: 'checkbox-label' }, ack, ' ', t('auth.recoveryKeyAck')),
       continueBtn
     )
   );
@@ -218,7 +225,6 @@ export function renderRegister(ctx: AppContext): void {
   clear(root);
 
   const emailInput = h('input', { type: 'email', required: 'true', autocomplete: 'email' }) as HTMLInputElement;
-  const nameInput = h('input', { type: 'text', required: 'true', autocomplete: 'name' }) as HTMLInputElement;
   const passwordInput = h('input', {
     type: 'password',
     required: 'true',
@@ -227,16 +233,26 @@ export function renderRegister(ctx: AppContext): void {
   }) as HTMLInputElement;
   const confirmInput = h('input', { type: 'password', required: 'true', autocomplete: 'new-password' }) as HTMLInputElement;
 
+  const languageSelect = h(
+    'select',
+    {},
+    ...LANGUAGES.map(l => h('option', { value: l.code }, l.nativeName))
+  ) as HTMLSelectElement;
+  languageSelect.value = getLanguage();
+  languageSelect.addEventListener('change', () => {
+    void setLanguage(languageSelect.value);
+  });
+
   const convenientAllowed = ESCROW_PUBLIC_KEY_PEM.length > 0;
   const modeSelect = h(
     'select',
     {},
-    h('option', { value: 'private' }, 'Private — zero-knowledge (recommended)'),
-    ...(convenientAllowed ? [h('option', { value: 'convenient' }, 'Convenient — email-only reset, weaker')] : [])
+    h('option', { value: 'private' }, t('auth.recoveryModePrivate')),
+    ...(convenientAllowed ? [h('option', { value: 'convenient' }, t('auth.recoveryModeConvenient'))] : [])
   ) as HTMLSelectElement;
 
   const errorHost = h('div', {});
-  const submitBtn = h('button', { type: 'submit' }, 'Create account') as HTMLButtonElement;
+  const submitBtn = h('button', { type: 'submit' }, t('auth.createAccount')) as HTMLButtonElement;
 
   const form = h(
     'form',
@@ -246,11 +262,11 @@ export function renderRegister(ctx: AppContext): void {
         void submit();
       },
     },
-    h('label', {}, 'Email', emailInput),
-    h('label', {}, 'Name', nameInput),
-    h('label', {}, `Password (min ${MIN_PASSWORD_LENGTH} characters)`, passwordInput),
-    h('label', {}, 'Confirm password', confirmInput),
-    h('label', {}, 'Recovery mode', modeSelect),
+    h('label', {}, t('auth.email'), emailInput),
+    h('label', {}, t('auth.language'), languageSelect),
+    h('label', {}, t('auth.passwordMinHint', { min: MIN_PASSWORD_LENGTH }), passwordInput),
+    h('label', {}, t('auth.confirmPassword'), confirmInput),
+    h('label', {}, t('auth.recoveryMode'), modeSelect),
     errorHost,
     submitBtn
   );
@@ -260,12 +276,12 @@ export function renderRegister(ctx: AppContext): void {
       'div',
       { class: 'auth-view' },
       brand(),
-      h('h1', {}, 'Create your Memoza account'),
+      h('h1', {}, t('auth.createAccountTitle')),
       form,
       h(
         'p',
         {},
-        'Already have an account? ',
+        t('auth.alreadyHaveAccount'),
         h(
           'a',
           {
@@ -275,7 +291,7 @@ export function renderRegister(ctx: AppContext): void {
               navigate('/login');
             },
           },
-          'Log in'
+          t('auth.logIn')
         )
       )
     )
@@ -284,16 +300,16 @@ export function renderRegister(ctx: AppContext): void {
   async function submit(): Promise<void> {
     clear(errorHost);
     const email = emailInput.value.trim();
-    const name = nameInput.value.trim();
+    const language = languageSelect.value;
     const password = passwordInput.value;
     const mode = modeSelect.value as 'private' | 'convenient';
 
     if (password.length < MIN_PASSWORD_LENGTH) {
-      errorHost.append(errorBanner(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`));
+      errorHost.append(errorBanner(t('auth.passwordTooShort', { min: MIN_PASSWORD_LENGTH })));
       return;
     }
     if (password !== confirmInput.value) {
-      errorHost.append(errorBanner('Passwords do not match'));
+      errorHost.append(errorBanner(t('auth.passwordMismatch')));
       return;
     }
 
@@ -315,7 +331,7 @@ export function renderRegister(ctx: AppContext): void {
 
       await authApi.register({
         email,
-        name,
+        language,
         password: envelope.authHash,
         kdf_iterations: KDF_ITERATIONS,
         public_key: publicKeyB64,
@@ -330,7 +346,7 @@ export function renderRegister(ctx: AppContext): void {
       renderRecoveryKeyScreen(ctx, recoveryKey);
     } catch (err) {
       submitBtn.disabled = false;
-      errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Registration failed'));
+      errorHost.append(errorBanner(err instanceof ApiError ? err.message : t('auth.registrationFailed')));
     }
   }
 }
@@ -346,7 +362,7 @@ export function renderLogin(ctx: AppContext): void {
     autocomplete: 'current-password',
   }) as HTMLInputElement;
   const errorHost = h('div', {});
-  const submitBtn = h('button', { type: 'submit' }, 'Log in') as HTMLButtonElement;
+  const submitBtn = h('button', { type: 'submit' }, t('auth.logIn')) as HTMLButtonElement;
 
   const form = h(
     'form',
@@ -356,8 +372,8 @@ export function renderLogin(ctx: AppContext): void {
         void submit();
       },
     },
-    h('label', {}, 'Email', emailInput),
-    h('label', {}, 'Password', passwordInput),
+    h('label', {}, t('auth.email'), emailInput),
+    h('label', {}, t('auth.password'), passwordInput),
     errorHost,
     submitBtn
   );
@@ -367,7 +383,7 @@ export function renderLogin(ctx: AppContext): void {
       'div',
       { class: 'auth-view' },
       brand(),
-      h('h1', {}, 'Log in to Memoza'),
+      h('h1', {}, t('auth.logInTitle')),
       form,
       h(
         'p',
@@ -381,13 +397,13 @@ export function renderLogin(ctx: AppContext): void {
               navigate('/reset');
             },
           },
-          'Forgot password?'
+          t('auth.forgotPassword')
         )
       ),
       h(
         'p',
         {},
-        "Don't have an account? ",
+        t('auth.noAccount'),
         h(
           'a',
           {
@@ -397,7 +413,7 @@ export function renderLogin(ctx: AppContext): void {
               navigate('/register');
             },
           },
-          'Register'
+          t('auth.register')
         )
       )
     )
@@ -411,9 +427,9 @@ export function renderLogin(ctx: AppContext): void {
     } catch (err) {
       submitBtn.disabled = false;
       if (err instanceof ApiError && err.status === 403) {
-        errorHost.append(errorBanner('Check your email to activate your account before logging in.'));
+        errorHost.append(errorBanner(t('auth.notActivatedMessage')));
       } else {
-        errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Login failed'));
+        errorHost.append(errorBanner(err instanceof ApiError ? err.message : t('auth.loginFailed')));
       }
     }
   }
@@ -431,12 +447,9 @@ export async function renderLock(ctx: AppContext, email: string): Promise<void> 
       required: 'true',
       autocomplete: 'current-password',
     }) as HTMLInputElement;
-    const submitBtn = h('button', { type: 'submit' }, 'Unlock') as HTMLButtonElement;
-    const logoutLink = h('a', { href: '#' }, 'Log out');
-    logoutLink.addEventListener('click', e => {
-      e.preventDefault();
-      performLogout(ctx);
-    });
+    const submitBtn = h('button', { type: 'submit' }, t('auth.unlock')) as HTMLButtonElement;
+    const logoutBtn = h('button', { type: 'button', class: 'secondary' }, t('auth.logOut'));
+    logoutBtn.addEventListener('click', () => void performLogout(ctx));
 
     const form = h(
       'form',
@@ -447,12 +460,21 @@ export async function renderLock(ctx: AppContext, email: string): Promise<void> 
         },
       },
       h('p', {}, email),
-      h('label', {}, 'Password', passwordInput),
+      h('label', {}, t('auth.password'), passwordInput),
       errorHost,
       submitBtn
     );
 
-    root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, 'Unlock Memoza'), form, logoutLink));
+    root.append(
+      h(
+        'div',
+        { class: 'auth-view' },
+        brand(),
+        h('h1', {}, t('auth.unlockTitle')),
+        form,
+        h('div', { class: 'auth-alt-action' }, logoutBtn)
+      )
+    );
 
     async function submit(): Promise<void> {
       clear(errorHost);
@@ -461,20 +483,20 @@ export async function renderLock(ctx: AppContext, email: string): Promise<void> 
         await unlockWithPassword(ctx, email, passwordInput.value);
       } catch (err) {
         submitBtn.disabled = false;
-        errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Unlock failed'));
+        errorHost.append(errorBanner(err instanceof ApiError ? err.message : t('auth.unlockFailed')));
       }
     }
   }
 
   if (unlockProvider && (await unlockProvider.isAvailable())) {
     clear(root);
-    root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, 'Unlocking…'), h('p', {}, email)));
+    root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, t('auth.unlocking')), h('p', {}, email)));
     try {
       await unlockProvider.unlock();
       navigate('/');
       return;
     } catch (err) {
-      errorHost.append(errorBanner(err instanceof Error ? err.message : 'Automatic unlock failed — enter your password.'));
+      console.warn('Automatic unlock failed; falling back to password.', err);
     }
   }
 
@@ -487,7 +509,7 @@ export function renderResetRequest(ctx: AppContext): void {
 
   const emailInput = h('input', { type: 'email', required: 'true' }) as HTMLInputElement;
   const statusHost = h('div', {});
-  const submitBtn = h('button', { type: 'submit' }, 'Send reset link') as HTMLButtonElement;
+  const submitBtn = h('button', { type: 'submit' }, t('auth.sendResetLink')) as HTMLButtonElement;
 
   const form = h(
     'form',
@@ -497,7 +519,7 @@ export function renderResetRequest(ctx: AppContext): void {
         void submit();
       },
     },
-    h('label', {}, 'Email', emailInput),
+    h('label', {}, t('auth.email'), emailInput),
     statusHost,
     submitBtn
   );
@@ -507,7 +529,7 @@ export function renderResetRequest(ctx: AppContext): void {
       'div',
       { class: 'auth-view' },
       brand(),
-      h('h1', {}, 'Reset your password'),
+      h('h1', {}, t('auth.resetPasswordTitle')),
       form,
       h(
         'p',
@@ -521,7 +543,7 @@ export function renderResetRequest(ctx: AppContext): void {
               navigate('/login');
             },
           },
-          'Back to login'
+          t('auth.backToLogin')
         )
       )
     )
@@ -538,13 +560,13 @@ export function renderResetRequest(ctx: AppContext): void {
           'div',
           { class: 'auth-view' },
           brand(),
-          h('h1', {}, 'Check your email'),
-          h('p', {}, 'If an account exists for that address, a reset link is on its way.')
+          h('h1', {}, t('auth.checkEmailTitle')),
+          h('p', {}, t('auth.resetLinkSentBody'))
         )
       );
     } catch {
       submitBtn.disabled = false;
-      statusHost.append(errorBanner('Something went wrong. Try again.'));
+      statusHost.append(errorBanner(t('auth.resetSomethingWrong')));
     }
   }
 }
@@ -557,11 +579,11 @@ export async function renderResetConfirm(ctx: AppContext, params: URLSearchParam
   const email = params.get('email') ?? '';
 
   if (!token || !email) {
-    root.append(h('div', { class: 'auth-view' }, errorBanner('Invalid reset link')));
+    root.append(h('div', { class: 'auth-view' }, errorBanner(t('auth.invalidResetLink'))));
     return;
   }
 
-  root.append(h('div', { class: 'auth-view' }, h('p', {}, 'Checking your reset link…')));
+  root.append(h('div', { class: 'auth-view' }, h('p', {}, t('auth.checkingResetLink'))));
 
   let probe: ResetProbeResponse;
   try {
@@ -569,7 +591,7 @@ export async function renderResetConfirm(ctx: AppContext, params: URLSearchParam
   } catch (err) {
     clear(root);
     root.append(
-      h('div', { class: 'auth-view' }, errorBanner(err instanceof ApiError ? err.message : 'Invalid or expired link'))
+      h('div', { class: 'auth-view' }, errorBanner(err instanceof ApiError ? err.message : t('auth.invalidOrExpiredLink')))
     );
     return;
   }
@@ -592,7 +614,7 @@ export async function renderResetConfirm(ctx: AppContext, params: URLSearchParam
   }) as HTMLInputElement;
   const confirmInput = h('input', { type: 'password', required: 'true' }) as HTMLInputElement;
   const errorHost = h('div', {});
-  const submitBtn = h('button', { type: 'submit' }, 'Set new password') as HTMLButtonElement;
+  const submitBtn = h('button', { type: 'submit' }, t('auth.setNewPassword')) as HTMLButtonElement;
 
   const form = h(
     'form',
@@ -603,30 +625,30 @@ export async function renderResetConfirm(ctx: AppContext, params: URLSearchParam
       },
     },
     probe.recovery_mode === 'private'
-      ? h('label', {}, 'Your recovery key', recoveryKeyInput)
-      : h('p', {}, 'Recovery key retrieved automatically.'),
-    h('label', {}, `New password (min ${MIN_PASSWORD_LENGTH} characters)`, passwordInput),
-    h('label', {}, 'Confirm new password', confirmInput),
+      ? h('label', {}, t('auth.yourRecoveryKey'), recoveryKeyInput)
+      : h('p', {}, t('auth.recoveryKeyAutoRetrieved')),
+    h('label', {}, t('auth.newPasswordMinHint', { min: MIN_PASSWORD_LENGTH }), passwordInput),
+    h('label', {}, t('auth.confirmNewPassword'), confirmInput),
     errorHost,
     submitBtn
   );
 
-  root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, 'Choose a new password'), form));
+  root.append(h('div', { class: 'auth-view' }, brand(), h('h1', {}, t('auth.chooseNewPasswordTitle')), form));
 
   async function submit(): Promise<void> {
     clear(errorHost);
     const password = passwordInput.value;
     if (password.length < MIN_PASSWORD_LENGTH) {
-      errorHost.append(errorBanner(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`));
+      errorHost.append(errorBanner(t('auth.passwordTooShort', { min: MIN_PASSWORD_LENGTH })));
       return;
     }
     if (password !== confirmInput.value) {
-      errorHost.append(errorBanner('Passwords do not match'));
+      errorHost.append(errorBanner(t('auth.passwordMismatch')));
       return;
     }
     const recoveryKey = recoveryKeyInput.value.trim();
     if (!recoveryKey) {
-      errorHost.append(errorBanner('Recovery key is required'));
+      errorHost.append(errorBanner(t('auth.recoveryKeyRequired')));
       return;
     }
 
@@ -661,8 +683,8 @@ export async function renderResetConfirm(ctx: AppContext, params: URLSearchParam
           'div',
           { class: 'auth-view' },
           brand(),
-          h('h1', {}, 'Password reset'),
-          h('p', {}, 'Your password has been reset. Log in with your new password.'),
+          h('h1', {}, t('auth.passwordResetTitle')),
+          h('p', {}, t('auth.passwordResetBody')),
           h(
             'button',
             {
@@ -671,13 +693,13 @@ export async function renderResetConfirm(ctx: AppContext, params: URLSearchParam
                 ctx.navigate('/login');
               },
             },
-            'Go to login'
+            t('auth.goToLogin')
           )
         )
       );
     } catch (err) {
       submitBtn.disabled = false;
-      errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Reset failed'));
+      errorHost.append(errorBanner(err instanceof ApiError ? err.message : t('auth.resetFailed')));
     }
   }
 }
@@ -688,7 +710,7 @@ export async function renderActivate(ctx: AppContext, params: URLSearchParams): 
 
   const token = params.get('token') ?? '';
   if (!token) {
-    root.append(h('div', { class: 'auth-view' }, brand(), errorBanner('Invalid or expired activation link')));
+    root.append(h('div', { class: 'auth-view' }, brand(), errorBanner(t('auth.invalidActivationLink'))));
     return;
   }
 
@@ -700,7 +722,7 @@ export async function renderActivate(ctx: AppContext, params: URLSearchParams): 
   }) as HTMLInputElement;
   const availabilityHost = h('div', {});
   const errorHost = h('div', {});
-  const submitBtn = h('button', { type: 'submit' }, 'Activate account') as HTMLButtonElement;
+  const submitBtn = h('button', { type: 'submit' }, t('auth.activateAccount')) as HTMLButtonElement;
 
   let debounceTimer: number | undefined;
 
@@ -713,18 +735,18 @@ export async function renderActivate(ctx: AppContext, params: URLSearchParams): 
     const value = usernameInput.value.trim().toLowerCase();
     if (debounceTimer) window.clearTimeout(debounceTimer);
     if (!USERNAME_RE.test(value)) {
-      setAvailability(value ? '3–32 characters: a–z, 0–9, hyphen (no leading/trailing hyphen)' : null);
+      setAvailability(value ? t('auth.usernameFormatHint') : null);
       return;
     }
-    setAvailability('Checking…');
+    setAvailability(t('auth.checkingAvailability'));
     debounceTimer = window.setTimeout(() => {
       void (async () => {
         try {
           const res = await authApi.checkUsernameAvailable(token, value);
           if (usernameInput.value.trim().toLowerCase() !== value) return;
-          setAvailability(res.available ? infoBanner('Available') : errorBanner('Not available'));
+          setAvailability(res.available ? infoBanner(t('auth.available')) : errorBanner(t('auth.notAvailable')));
         } catch {
-          setAvailability('Could not check availability');
+          setAvailability(t('auth.couldNotCheckAvailability'));
         }
       })();
     }, 400);
@@ -738,7 +760,7 @@ export async function renderActivate(ctx: AppContext, params: URLSearchParams): 
         void submit();
       },
     },
-    h('label', {}, 'Choose a username', usernameInput),
+    h('label', {}, t('auth.chooseUsername'), usernameInput),
     availabilityHost,
     errorHost,
     submitBtn
@@ -749,8 +771,8 @@ export async function renderActivate(ctx: AppContext, params: URLSearchParams): 
       'div',
       { class: 'auth-view' },
       brand(),
-      h('h1', {}, 'Activate your account'),
-      h('p', {}, 'This is your permanent public handle for page links. It cannot be changed later.'),
+      h('h1', {}, t('auth.activateAccountTitle')),
+      h('p', {}, t('auth.activateAccountBody')),
       form
     )
   );
@@ -759,7 +781,7 @@ export async function renderActivate(ctx: AppContext, params: URLSearchParams): 
     clear(errorHost);
     const username = usernameInput.value.trim().toLowerCase();
     if (!USERNAME_RE.test(username)) {
-      errorHost.append(errorBanner('Enter a valid username'));
+      errorHost.append(errorBanner(t('auth.enterValidUsername')));
       return;
     }
     submitBtn.disabled = true;
@@ -771,17 +793,17 @@ export async function renderActivate(ctx: AppContext, params: URLSearchParams): 
           'div',
           { class: 'auth-view' },
           brand(),
-          h('h1', {}, 'Account activated'),
-          h('p', {}, 'You can now log in.'),
-          h('button', { type: 'button', onclick: () => navigate('/login') }, 'Go to login')
+          h('h1', {}, t('auth.accountActivatedTitle')),
+          h('p', {}, t('auth.accountActivatedBody')),
+          h('button', { type: 'button', onclick: () => navigate('/login') }, t('auth.goToLogin'))
         )
       );
     } catch (err) {
       submitBtn.disabled = false;
       if (err instanceof ApiError && err.status === 409) {
-        errorHost.append(errorBanner('That username is not available. Try another.'));
+        errorHost.append(errorBanner(t('auth.usernameNotAvailable')));
       } else {
-        errorHost.append(errorBanner(err instanceof ApiError ? err.message : 'Activation failed. Re-register to get a fresh link.'));
+        errorHost.append(errorBanner(err instanceof ApiError ? err.message : t('auth.activationFailed')));
       }
     }
   }

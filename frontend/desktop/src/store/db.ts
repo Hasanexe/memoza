@@ -44,7 +44,8 @@ const MIGRATIONS = [
     payload_json TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
-    last_error TEXT
+    last_error TEXT,
+    failed INTEGER NOT NULL DEFAULT 0
   )`,
 ];
 
@@ -52,6 +53,7 @@ const ALTER_STATEMENTS = [
   'ALTER TABLE local_note ADD COLUMN page_no INTEGER',
   'ALTER TABLE local_note ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0',
   "ALTER TABLE local_account ADD COLUMN username TEXT NOT NULL DEFAULT ''",
+  'ALTER TABLE write_queue ADD COLUMN failed INTEGER NOT NULL DEFAULT 0',
 ];
 
 let dbPromise: Promise<Database> | null = null;

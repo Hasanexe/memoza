@@ -1,7 +1,6 @@
 import { signAccessToken } from '@memoza/shared';
 import { getRefreshToken, hashRefreshToken, buildRefreshCookie, toBase64Url, enforceRefreshTokenCap } from '../tokens';
 import { json } from '../types';
-import type { Role } from '@memoza/shared';
 import type { AuthEnv } from '../types';
 
 export async function handleRefresh(
@@ -29,14 +28,13 @@ export async function handleRefresh(
     return json({ error: 'Unauthorized' }, 401);
   }
 
-  const user = await env.DB.prepare('SELECT role FROM users WHERE id = ?')
+  const user = await env.DB.prepare('SELECT id FROM users WHERE id = ?')
     .bind(row.user_id)
-    .first<{ role: string }>();
+    .first<{ id: string }>();
   if (!user) return json({ error: 'Unauthorized' }, 401);
 
   const accessToken = await signAccessToken(env.JWT_PRIVATE_KEY, {
     user_id: row.user_id,
-    role: user.role as Role,
   });
 
   const newRawBytes = crypto.getRandomValues(new Uint8Array(32));

@@ -73,9 +73,21 @@ export type IconName =
   | 'list'
   | 'checkbox'
   | 'code'
-  | 'logout';
+  | 'logout'
+  | 'refresh'
+  | 'lock';
 
 const ICON_SHAPES: Record<IconName, () => SVGElement[]> = {
+  lock: () => [
+    svgShape('rect', { x: '4', y: '10.5', width: '16', height: '10', rx: '2' }),
+    svgShape('path', { d: 'M8 10.5V7a4 4 0 0 1 8 0v3.5' }),
+  ],
+  refresh: () => [
+    svgShape('polyline', { points: '21 5 21 10 16 10' }),
+    svgShape('polyline', { points: '3 19 3 14 8 14' }),
+    svgShape('path', { d: 'M5.2 9.2a7 7 0 0 1 11.6-2.6L21 10' }),
+    svgShape('path', { d: 'M3 14l4.2 3.4A7 7 0 0 0 18.8 14.8' }),
+  ],
   plus: () => [
     svgShape('line', { x1: '12', y1: '5', x2: '12', y2: '19' }),
     svgShape('line', { x1: '5', y1: '12', x2: '19', y2: '12' }),
@@ -259,4 +271,14 @@ export function showToast(message: string, actionLabel?: string, onAction?: () =
   toast.append(h('div', { class: 'mz-toast__bar' }));
   document.body.append(toast);
   timer = window.setTimeout(dismiss, 5000);
+}
+
+export function relativeTime(timestamp: number): string {
+  const seconds = Math.round((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  return `${Math.round(hours / 24)} d ago`;
 }

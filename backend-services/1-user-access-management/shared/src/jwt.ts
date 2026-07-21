@@ -1,6 +1,6 @@
 import { SignJWT, jwtVerify, importPKCS8, importSPKI, errors } from 'jose';
 import type { KeyLike } from 'jose';
-import type { AccessClaims, Role } from './types';
+import type { AccessClaims } from './types';
 
 const ISS = 'https://api.memoza.io';
 const AUD = 'https://api.memoza.io';
@@ -28,10 +28,10 @@ export async function importPublicKey(pem: string): Promise<KeyLike> {
 
 export async function signAccessToken(
   privateKeyPem: string,
-  claims: { user_id: string; role: Role }
+  claims: { user_id: string }
 ): Promise<string> {
   const key = await importPrivateKey(privateKeyPem);
-  return new SignJWT({ user_id: claims.user_id, role: claims.role })
+  return new SignJWT({ user_id: claims.user_id })
     .setProtectedHeader({ alg: 'EdDSA' })
     .setIssuedAt()
     .setIssuer(ISS)
@@ -54,7 +54,6 @@ export async function verifyToken(
       const { payload } = await jwtVerify(token, key, { issuer: ISS, audience: AUD });
       return {
         user_id: payload['user_id'] as string,
-        role: payload['role'] as Role,
         exp: payload.exp as number,
       };
     } catch (err) {

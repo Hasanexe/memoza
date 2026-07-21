@@ -10,7 +10,7 @@ import * as authApi from '@memoza/core/api/auth';
 import { getFormat } from '@memoza/core/views/controlTags';
 import { markSyncing } from '@memoza/core/connection';
 import { getDb, getCursor, setCursor } from './db';
-import { enqueue, drainQueue } from './queue';
+import { enqueue, drainQueue, pendingWriteCount } from './queue';
 
 interface LocalNoteRow {
   id: string;
@@ -199,7 +199,7 @@ export function createSqliteStore(): Store {
         row = await getLocalRow(id);
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) return null;
-        return null;
+        throw err;
       }
     }
     if (!row) return null;
@@ -262,7 +262,6 @@ export function createSqliteStore(): Store {
       title_ct: titleCt,
       body_ct: bodyCt,
       tags_ct: tagsCt,
-      base_rev: row.rev,
       isPublic: row.is_public === 1,
     });
 
@@ -425,5 +424,6 @@ export function createSqliteStore(): Store {
     postComment,
     deleteComment,
     search,
+    pendingWriteCount,
   };
 }

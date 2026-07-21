@@ -243,3 +243,24 @@ in-memory `store` impl and the app entry, and the Tauri shell later reuses
   in-memory-only session (already the case — nothing survives a reload
   regardless), there is nothing to "log out" of on web; a reload or closed
   tab ends the session.
+- 2026-07-20 (CSP + public-page URL) — The `<style>` block in `index.html` that
+  prevents a theme flash was being **blocked in production**: `_headers` sets
+  `style-src 'self'` with no hash or nonce, so the block silently no-opped and
+  logged a CSP violation on every load. Moved to `public/theme-boot.css` and
+  linked with `<link rel="stylesheet">` — still render-blocking in `<head>`, so
+  it prevents the flash exactly as before, but it needs no hash and therefore
+  cannot be silently re-broken by a future whitespace edit (the reason a
+  `'sha256-…'` hash was rejected). Note `element.style.setProperty()` in
+  `views/notePanel.ts` is *not* affected: CSP governs style parsed from markup,
+  not CSSOM mutation from script.
+  Separately, the SPA-fallback rewrite for public pages set `location.hash`
+  while leaving the path intact, so a shared link resolved to
+  `/{username}/{page}#/{username}/{page}` in the address bar. It now uses
+  `history.replaceState` to write path and hash together. Cosmetic only — the
+  generated share link itself was always clean.
+- 2026-07-20 (export integrity) — The "Export all notes" flow filtered `null`
+  results out of `store.getNote()`, so a transient failure on one note silently
+  dropped it from the exported file and the user got a partial backup with no
+  warning. With `getNote()` now rethrowing non-404 errors, the export surfaces
+  an error banner and downloads nothing rather than producing a quietly
+  incomplete file.

@@ -10,10 +10,10 @@ spec in `docs/architecture/README.md` — not restated here.
 | Worker | Route | Role |
 |---|---|---|
 | `memoza-auth` | `api.memoza.io/auth/*` | Registration, login, refresh, logout, password change, password reset, account deletion; owns D1 `memoza_auth`, the JWT **private** key, and every user's key envelope + public key |
-| `memoza-gateway` | `api.memoza.io/*` (everything else) | Verifies EdDSA access JWTs (against the current + optional previous **public** key, for zero-downtime rotation), answers `/health` and `/public/*` unauthenticated, strips inbound `Authorization`/`X-User-Id`/`X-User-Role`, attaches trusted values, forwards `/notes/*` to `memoza-notes` over a service binding; also serves the authenticated public-key lookup and composes the public-page read (`username` → `memoza-auth`, page content → `memoza-notes`) |
+| `memoza-gateway` | `api.memoza.io/*` (everything else) | Verifies EdDSA access JWTs (against the current + optional previous **public** key, for zero-downtime rotation), answers `/health` and `/public/*` unauthenticated, strips inbound `Authorization`/`X-User-Id`/`X-User-Role`, attaches a trusted `X-User-Id`, forwards `/notes/*` to `memoza-notes` over a service binding; also serves the authenticated public-key lookup and composes the public-page read (`username` → `memoza-auth`, page content → `memoza-notes`) |
 
-Access tokens: EdDSA JWTs, 15 min, claims `user_id` + `role` (single role
-`Editor` for now). Refresh tokens: 32 random bytes, rotated on every refresh,
+Access tokens: EdDSA JWTs, 15 min, claim `user_id`. Refresh tokens: 32 random
+bytes, rotated on every refresh,
 stored as SHA-256 hash only, delivered via
 `__Secure-refresh_token; HttpOnly; Secure; SameSite=Strict; Path=/auth`.
 
@@ -30,10 +30,11 @@ service.
 | `GET /auth/username-available?username=&token=` | Requires a valid, unexpired **activation token** (no JWT exists yet at activation time — the token is the proof of a pending registration, so this is not an open public endpoint). Generic `{ "available": true|false }` — never reveals *why* unavailable (taken vs reserved vs retired) | Implemented |
 | `POST /auth/register` | Store key envelope + public key for an **inactive** account (no username yet). **Always a generic `202`** whether or not the email exists: new email → activation link mailed; existing email → "you already have an account" mailed. No tokens returned; no enumeration surface | Implemented |
 | `POST /auth/activate` | `{token, username}` from the emailed activation link: validates the token, claims the username (generic `409` if unavailable — pick another), sets `active=1`, deletes the token. The user then logs in normally | Implemented |
-| `POST /auth/login` | Verify `authHash`; return tokens + `wrapped_dek` + `wrapped_private_key` + `kdf_iterations` + `username`. An inactive account with **correct** credentials gets `403 "Not activated"` (leaks nothing — the caller already proved they hold the password); wrong credentials stay generic `401` | Implemented |
+| `POST /auth/login` | Verify `authHash`; return tokens + `wrapped_dek` + `wrapped_private_key` + `kdf_iterations` + `username` + `language`. An inactive account with **correct** credentials gets `403 "Not activated"` (leaks nothing — the caller already proved they hold the password); wrong credentials stay generic `401` | Implemented |
 | `POST /auth/refresh` | Rotate refresh token, new access token | Implemented |
 | `POST /auth/logout` | Delete refresh token, clear cookie | Implemented |
 | `PUT /auth/password` | Change password: swap `authHash` + `wrapped_dek` + `wrapped_private_key`; revoke all refresh tokens | Implemented |
+| `PUT /auth/language` | Change the caller's `language` preference (one of the 32 `ALLOWED_LANGUAGES` codes). Identified by the `__Secure-refresh_token` cookie, same as `/auth/refresh`/`/auth/logout` — no password reverification, since this isn't credential-sensitive | Implemented |
 | `POST /auth/reset/request` | Email a reset token (proves mailbox ownership) | Implemented |
 | `POST /auth/reset/confirm` | Two-step: `{token,email}` → `{recovery_mode[, recovery_key]}`; full body → store new `authHash` + re-wrapped envelope, revoke all sessions | Implemented |
 | `DELETE /auth/account` | Delete user + tokens; fan out to `memoza-notes` to purge notes/grants/comments | Implemented |
@@ -45,8 +46,9 @@ service.
 Registration is a two-step flow; no account can log in, share, or be resolved
 publicly until the emailed activation link is used:
 
-1. `POST /auth/register` — the client sends `email, name, password = authHash,
-   kdf_iterations` + the full key envelope (no username). The response is
+1. `POST /auth/register` — the client sends `email, password = authHash,
+   language, kdf_iterations` + the full key envelope (no username). The
+   response is
    **always** a generic `202` "check your email":
    - **New email** → an inactive `users` row is created (envelope stored,
      `username = NULL`, `active = 0`), an `activation_token` is issued
@@ -227,8 +229,16 @@ user's grant.
 - **Account deletion fans out via service binding** — auth cannot reach another
   service's D1 directly; the notes service owns its data and exposes an internal
   purge. Rejected: leaving notes orphaned (privacy + storage cost).
-- **Single role `Editor`** — no admin UI; the gateway RBAC hook stays trivial
-  until a real second role exists.
+- **No roles / no RBAC** — every user has identical capability, and per-note
+  authorization is carried entirely by `note_grant` rows in the notes service,
+  not by anything on the identity. The original single-`Editor` role and the
+  gateway RBAC hook were removed: a one-member role union made `checkRbac` a
+  tautology and spread a meaningless value across the JWT, the `X-User-Role`
+  header, and a DB column. Reintroduce a role only alongside a real second role
+  and a real capability difference. The `users.role` column itself was dropped
+  in migration `0002` once the `language` column gave the project a reason to
+  touch the `users` table again (see Changes) — no benefit to a separate
+  migration just for that one column.
 - **Username is a separate public handle, not a login credential (Path 3 of
   three considered)** — login-by-username either costs email login (username
   becomes the KDF salt) or costs a new enumeration surface (random salt + a
@@ -429,3 +439,32 @@ not a code change.
   stays on `memoza-auth` only, now scoped to its original other job of
   building activation/reset-link email URLs; dropped entirely from
   `memoza-gateway`, which had no other use for it.
+- 2026-07-20 (RBAC removal + auth hygiene) — Removed roles entirely: the
+  `Role` type, the `role` JWT claim, the gateway's `checkRbac` hook, and the
+  gateway-set `X-User-Role` header are all gone (see the "No roles / no RBAC"
+  decision above). The gateway still *strips* an inbound `X-User-Role` — a
+  client-controlled identity header should never survive the trust boundary
+  even when nothing downstream reads it. `handleRefresh`'s `SELECT role` became
+  `SELECT id`: the query was doing double duty as a user-existence check, so it
+  was kept rather than dropped (removing it would have let a refresh token for
+  a deleted user still mint access tokens). Also: the activation email now
+  HTML-escapes the user-supplied `name`, and a stray `console.log` of the
+  user id on the escrow-decrypt path was removed.
+- 2026-07-20 (`role`/`name` dropped, `language` added) — Migration
+  `0002_language_and_cleanup.sql`: dropped `users.role` (the vestigial
+  single-`Editor` column noted below, finally migrated away for no remaining
+  benefit) and `users.name` (collected at registration but the only thing that
+  ever read it was the activation email's "Hi {name}" greeting — not shown
+  anywhere in the app UI; dropped rather than kept as unused surface area, per
+  `CODING-RULES.md`'s minimalism). Added `users.language` (`NOT NULL DEFAULT
+  'en'`, one of 32 codes in `@memoza/shared`'s new `ALLOWED_LANGUAGES`) for the
+  frontend's new i18n system (`docs/architecture/frontend-core/README.md`).
+  `POST /auth/register` now takes `language` instead of `name`; `POST
+  /auth/login` returns it so other devices/sessions converge on the same
+  preference; new `PUT /auth/language` lets a signed-in user change it later
+  (Settings). The new endpoint identifies the caller via the
+  `__Secure-refresh_token` cookie, matching `/auth/refresh`/`/auth/logout`'s
+  existing pattern, rather than the password-reverification pattern used by
+  `/auth/password`/`/auth/account` — changing a display preference isn't
+  credential-sensitive, so it doesn't need the stronger check those endpoints
+  use.

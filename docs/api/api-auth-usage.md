@@ -36,7 +36,7 @@ Request:
 ```json
 {
   "email": "user@example.com",
-  "name": "Ada",
+  "language": "en",
   "password": "<authHash>",
   "kdf_iterations": 600000,
   "public_key": "<base64 SPKI>",
@@ -62,6 +62,13 @@ client-side and this is the only moment it exists. Then show a "check your
 email to activate" screen. `400` only for validation errors.
 
 There is **no username field** — the username is picked at activation (below).
+
+`language` is one of 32 ISO codes (`en`, `es`, `pt`, `fr`, `de`, `it`, `nl`,
+`pl`, `ro`, `sv`, `da`, `nb`, `fi`, `cs`, `sk`, `hu`, `el`, `tr`, `ru`, `uk`,
+`ar`, `he`, `hi`, `bn`, `ur`, `id`, `ms`, `th`, `vi`, `zh`, `ja`, `ko`) — send
+whatever the registration form's language picker is currently set to
+(pre-filled from the browser's language, changeable before submit). `400` on
+any other value.
 
 ## `GET /auth/username-available?username=<username>&token=<activation token>`
 
@@ -106,14 +113,17 @@ Request: `{ "email": "…", "password": "<authHash>" }`.
   "kdf_iterations": 600000,
   "wrapped_dek": "<base64>",
   "wrapped_private_key": "<base64>",
-  "username": "ada"
+  "username": "ada",
+  "language": "en"
 }
 ```
 
 `username` is the account's permanent public handle (set at activation); cache it in
 the client session alongside `email` — it's what builds a published page's
 shareable link (`app.memoza.io/<username>/<page_no>`, see `api-notes-usage.md`'s
-"Pages & public sharing").
+"Pages & public sharing"). `language` is the account's stored UI-language
+preference (see `PUT /auth/language` below) — apply it with `i18n.setLanguage()`
+after login so a second device converges on the same choice.
 
 Unwrap `dek` and `privateKey` with `wrapKey` and hold them only in an in-memory
 session module (never `localStorage`/`sessionStorage`/IndexedDB — see
@@ -157,6 +167,16 @@ Request:
 
 `200` → fresh `access_token` + new refresh cookie (current device stays in);
 all other sessions are revoked. `401` if `old_password` is wrong.
+
+## `PUT /auth/language`
+
+Request: `{ "language": "es" }` — one of the same 32 codes as registration.
+No body fields identify the account; the call relies on the
+`__Secure-refresh_token` cookie (same as `/auth/refresh`/`/auth/logout`), so
+call it with `credentials: 'include'` and no explicit user id. `200` →
+`{ "ok": true, "language": "es" }` — call `i18n.setLanguage()` with the
+confirmed value. `401` if the refresh cookie is missing/expired. `400` for an
+unrecognized code.
 
 ## `POST /auth/reset/request`
 

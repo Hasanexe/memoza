@@ -10,9 +10,8 @@ are in the canonical crypto spec (`docs/architecture/README.md`).
 | `id` | TEXT PK | UUID |
 | `email` | TEXT UNIQUE NOT NULL | Stored lowercase. Login + KDF salt + reset — unaffected by `username` |
 | `username` | TEXT UNIQUE | Permanent public handle, **NULL until activation** (picked in `POST /auth/activate`, immutable after — no rename path). Stored lowercase; 3–32 chars, `[a-z0-9-]`, no leading/trailing hyphen (case-insensitive uniqueness — `Ada` = `ada`). Used for public page links, `.mmp`/`memoza://` shortcuts, and optionally sharing — never for login or key derivation. On account deletion the value moves to `retired_usernames` |
-| `name` | TEXT NOT NULL | Display name |
 | `password_hash` | TEXT NOT NULL | `pbkdf2$<iterations>$<b64 salt>$<b64 hash>` of the client `authHash`, PBKDF2-SHA256 server-side (16-byte salt, 256-bit output); verified with `timingSafeEqual` |
-| `role` | TEXT NOT NULL DEFAULT 'Editor' | Single role for now |
+| `language` | TEXT NOT NULL DEFAULT 'en' | UI language preference, one of the 32 codes in `@memoza/shared`'s `ALLOWED_LANGUAGES`. Set at registration (client-detected, user-changeable) and via `PUT /auth/language`; returned by `POST /auth/login` so other devices pick it up |
 | `created_at` | INTEGER NOT NULL | Unix ms |
 | `active` | INTEGER NOT NULL DEFAULT 0 | 0 = registered but not yet activated (login refused with `403 "Not activated"` on correct credentials, invisible to `resolve-username`); 1 = activated. Set by `POST /auth/activate`. Inactive rows older than `UNACTIVATED_RETENTION_MS` are lazily deleted during register |
 | `kdf_iterations` | INTEGER NOT NULL | Client-side PBKDF2 iteration count (600,000) |

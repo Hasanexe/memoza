@@ -67,7 +67,6 @@ export async function handleResetConfirm(request: Request, env: AuthEnv): Promis
       return json({ error: 'Invalid or expired token' }, 400);
     }
     const recoveryKey = await decryptEscrowedRecoveryKey(env.ESCROW_PRIVATE_KEY, row.escrowed_recovery);
-    console.log('escrow decryption', row.user_id);
     return json({ recovery_mode: row.recovery_mode, recovery_key: recoveryKey, ...envelope }, 200);
   }
 

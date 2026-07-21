@@ -13,6 +13,7 @@ import { handleResetConfirm } from './handlers/reset-confirm';
 import { handleDeleteAccount } from './handlers/delete-account';
 import { handlePublicKeyLookup } from './handlers/public-key';
 import { handleResolveUsername } from './handlers/resolve-username';
+import { handleUpdateLanguage } from './handlers/language';
 
 export default {
   async fetch(request: Request, env: AuthEnv, ctx: ExecutionContext): Promise<Response> {
@@ -42,6 +43,8 @@ export default {
       response = await handleLogout(request, env);
     } else if (method === 'PUT' && pathname === '/auth/password') {
       response = await handleChangePassword(request, env);
+    } else if (method === 'PUT' && pathname === '/auth/language') {
+      response = await handleUpdateLanguage(request, env);
     } else if (method === 'POST' && pathname === '/auth/reset/request') {
       response = await handleResetRequest(request, env, ctx);
     } else if (method === 'POST' && pathname === '/auth/reset/confirm') {

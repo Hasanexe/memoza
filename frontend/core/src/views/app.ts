@@ -1,4 +1,5 @@
 import { isUnlocked } from '../crypto/session';
+import { onLanguageChange, t } from '../i18n';
 import type { Store } from '../store/types';
 import {
   renderRegister,
@@ -7,6 +8,7 @@ import {
   renderResetRequest,
   renderResetConfirm,
   renderActivate,
+  lockSession,
 } from './authViews';
 import { renderList } from './listView';
 import { renderEditor } from './editorView';
@@ -15,6 +17,7 @@ import { renderPublicReader } from './publicReaderView';
 import { clear, h, icon } from './dom';
 import { renderSidebar, type SidebarSection, type SidebarChrome } from './sidebar';
 import { createNotePanel, type NotePanel, type NotePanelSection } from './notePanel';
+import { createSyncStatus } from './syncStatus';
 import { EMAIL_STORAGE_KEY } from '../config';
 
 const PAGE_ROUTE_RE = /^[1-9][0-9]*$/;
@@ -42,6 +45,8 @@ export interface AppContext {
   root: HTMLElement;
   store: Store;
   navigate: (path: string) => void;
+  refresh: () => void;
+  platform: 'web' | 'native';
   ensureShell: (section: SidebarSection, openNoteId: string | null) => ShellHandle;
   unlockProvider?: UnlockProvider;
   onUnlock?: (session: LocalAccountSnapshot) => void | Promise<void>;
@@ -64,6 +69,7 @@ function currentRoute(): { segments: string[]; params: URLSearchParams } {
 }
 
 export interface MountOptions {
+  platform?: AppContext['platform'];
   unlockProvider?: UnlockProvider;
   onUnlock?: AppContext['onUnlock'];
   onLogout?: AppContext['onLogout'];
@@ -73,18 +79,19 @@ export interface MountOptions {
   localAccount?: AppContext['localAccount'];
 }
 
-const MAIN_TOP_BAR_ITEMS: { key: SidebarSection; label: string; iconName: Parameters<typeof icon>[0]; path: string }[] = [
-  { key: 'mine', label: 'My notes', iconName: 'notebook', path: '/' },
-  { key: 'shared', label: 'Shared with me', iconName: 'users', path: '/shared' },
-  { key: 'trash', label: 'Trash', iconName: 'trash', path: '/trash' },
-  { key: 'settings', label: 'Settings', iconName: 'settings', path: '/settings' },
-];
+function mainTopBarItems(): { key: SidebarSection; label: string; iconName: Parameters<typeof icon>[0]; path: string }[] {
+  return [
+    { key: 'mine', label: t('nav.myNotes'), iconName: 'notebook', path: '/' },
+    { key: 'shared', label: t('nav.sharedWithMe'), iconName: 'users', path: '/shared' },
+    { key: 'trash', label: t('nav.trash'), iconName: 'trash', path: '/trash' },
+    { key: 'settings', label: t('nav.settings'), iconName: 'settings', path: '/settings' },
+  ];
+}
 
 interface Shell {
   el: HTMLElement;
   main: HTMLElement;
   sidebar: SidebarChrome;
-  sidebarPanel: NotePanel;
   mainPanel: NotePanel;
   mainTopBar: HTMLElement;
   setMainTopBarActive: (section: SidebarSection) => void;
@@ -95,12 +102,12 @@ function buildMainTopBar(ctx: AppContext): { el: HTMLElement; setActive: (sectio
   const buttons = new Map<SidebarSection, HTMLButtonElement>();
   const newBtn = h(
     'button',
-    { type: 'button', class: 'primary icon-btn', 'aria-label': 'New page', title: 'New page' },
+    { type: 'button', class: 'primary icon-btn', 'aria-label': t('nav.newPage'), title: t('nav.newPage') },
     icon('plus')
   );
   newBtn.addEventListener('click', () => ctx.navigate('/note/new'));
 
-  const items = MAIN_TOP_BAR_ITEMS.map(item => {
+  const items = mainTopBarItems().map(item => {
     const btn = h(
       'button',
       { type: 'button', class: 'icon-btn ghost main-topbar-link', 'aria-label': item.label, title: item.label },
@@ -112,6 +119,18 @@ function buildMainTopBar(ctx: AppContext): { el: HTMLElement; setActive: (sectio
   });
 
   const el = h('div', { class: 'main-topbar' }, newBtn, ...items);
+
+  if (ctx.platform === 'native') {
+    const lockBtn = h(
+      'button',
+      { type: 'button', class: 'icon-btn ghost main-topbar-lock', 'aria-label': t('nav.lock'), title: t('nav.lock') },
+      icon('lock')
+    );
+    lockBtn.addEventListener('click', () => lockSession(ctx));
+    el.append(lockBtn);
+  }
+
+  el.append(createSyncStatus(ctx.store, ctx.refresh, 'panel').el);
 
   function setActive(section: SidebarSection): void {
     for (const [key, btn] of buttons) btn.classList.toggle('active', key === section);
@@ -135,23 +154,20 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
 
   function ensureShell(section: SidebarSection, openNoteId: string | null): ShellHandle {
     if (!shell) {
-      const sidebarPanel = createNotePanel(ctx);
       const mainPanel = createNotePanel(ctx);
-      const sidebar = renderSidebar(ctx, section, sidebarPanel);
+      const sidebar = renderSidebar(ctx, section);
       const { el: mainTopBar, setActive: setMainTopBarActive } = buildMainTopBar(ctx);
       const main = h('div', { class: 'main' });
       const el = h('div', { class: 'app-shell' }, sidebar.el, main);
       clear(root);
       root.append(el);
-      shell = { el, main, sidebar, sidebarPanel, mainPanel, mainTopBar, setMainTopBarActive, activeNav: section };
+      shell = { el, main, sidebar, mainPanel, mainTopBar, setMainTopBarActive, activeNav: section };
     } else if (shell.activeNav !== section) {
       shell.sidebar.setActive(section);
       shell.activeNav = section;
     }
     if (section !== 'settings') {
-      shell.sidebarPanel.setSection(section as NotePanelSection);
       shell.mainPanel.setSection(section as NotePanelSection);
-      shell.sidebarPanel.setOpenNote(openNoteId);
       shell.mainPanel.setOpenNote(openNoteId);
     }
     shell.setMainTopBarActive(section);
@@ -170,18 +186,16 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
         }
         shell.setMainTopBarActive(s);
         if (s !== 'settings') {
-          shell.sidebarPanel.setSection(s as NotePanelSection);
           shell.mainPanel.setSection(s as NotePanelSection);
         }
       },
       setOpenNote(id: string | null): void {
-        shell?.sidebarPanel.setOpenNote(id);
         shell?.mainPanel.setOpenNote(id);
       },
     };
   }
 
-  const ctx: AppContext = { root, store, navigate, ensureShell, ...options };
+  const ctx: AppContext = { root, store, navigate, refresh, platform: 'web', ensureShell, ...options };
 
   function render(): void {
     const { segments, params } = currentRoute();
@@ -241,11 +255,14 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
   }
 
   window.addEventListener('hashchange', render);
+  onLanguageChange(() => {
+    teardownShell();
+    render();
+  });
   render();
 
   function refresh(): void {
     if (shell) {
-      shell.sidebarPanel.refresh();
       shell.mainPanel.refresh();
     } else {
       render();

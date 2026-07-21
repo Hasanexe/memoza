@@ -39,4 +39,5 @@ export interface Store {
   postComment(noteId: string, body: string): Promise<DecryptedComment>;
   deleteComment(noteId: string, commentId: string): Promise<void>;
   search(query: string): Promise<DecryptedNoteSummary[]>;
+  pendingWriteCount?(): Promise<number>;
 }

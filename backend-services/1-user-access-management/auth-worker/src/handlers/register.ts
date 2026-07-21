@@ -5,6 +5,7 @@ import {
   validateEnvelopeField,
   validateKdfIterations,
   validateRecoveryMode,
+  validateLanguage,
 } from '../validation';
 import { hash } from '../password';
 import { toBase64Url, hashRefreshToken } from '../tokens';
@@ -27,7 +28,7 @@ export async function handleRegister(
   const {
     email,
     password,
-    name,
+    language,
     kdf_iterations,
     public_key,
     wrapped_dek,
@@ -38,8 +39,8 @@ export async function handleRegister(
   } = body;
   const recoveryMode = body.recovery_mode === undefined ? 'private' : body.recovery_mode;
 
-  if (typeof email !== 'string' || typeof password !== 'string' || typeof name !== 'string') {
-    return json({ error: 'email, password, and name are required' }, 400);
+  if (typeof email !== 'string' || typeof password !== 'string') {
+    return json({ error: 'email and password are required' }, 400);
   }
   if (!validateEmail(email)) {
     return json({ error: 'Invalid email format' }, 400);
@@ -47,8 +48,8 @@ export async function handleRegister(
   if (!validateAuthHash(password)) {
     return json({ error: 'Invalid password' }, 400);
   }
-  if (name.length === 0 || name.length > 256) {
-    return json({ error: 'Invalid name' }, 400);
+  if (!validateLanguage(language)) {
+    return json({ error: 'Invalid language' }, 400);
   }
   if (!validateKdfIterations(kdf_iterations)) {
     return json({ error: 'Invalid kdf_iterations' }, 400);
@@ -86,13 +87,13 @@ export async function handleRegister(
 
   const row = await env.DB.prepare(
     `INSERT INTO users (
-       id, email, name, password_hash, role, created_at, active,
+       id, email, password_hash, language, created_at, active,
        kdf_iterations, public_key, wrapped_dek, wrapped_private_key,
        wrapped_dek_recovery, wrapped_private_key_recovery, recovery_mode, escrowed_recovery
-     ) VALUES (?, ?, ?, ?, 'Editor', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(email) DO UPDATE SET
-       name = excluded.name,
        password_hash = excluded.password_hash,
+       language = excluded.language,
        kdf_iterations = excluded.kdf_iterations,
        public_key = excluded.public_key,
        wrapped_dek = excluded.wrapped_dek,
@@ -107,8 +108,8 @@ export async function handleRegister(
     .bind(
       newId,
       normalizedEmail,
-      name,
       passwordHash,
+      language,
       createdAt,
       kdf_iterations,
       public_key,
@@ -137,7 +138,7 @@ export async function handleRegister(
     ).bind(tokenHash, row.id, expiresAt),
   ]);
 
-  ctx.waitUntil(sendActivation(env, normalizedEmail, name, rawToken));
+  ctx.waitUntil(sendActivation(env, normalizedEmail, rawToken));
 
   return json({ ok: true }, 202);
 }

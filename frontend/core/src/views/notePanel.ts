@@ -4,6 +4,7 @@ import type { DecryptedNoteSummary } from '../store/types';
 import { PIN_TAG } from './tagsEditor';
 import { contentTags, getColor, CONTROL_KEYS } from './controlTags';
 import { confirmRestorePublished, confirmDialog } from './shareView';
+import { t } from '../i18n';
 
 export type NotePanelSection = 'mine' | 'shared' | 'trash';
 
@@ -41,15 +42,15 @@ export function createNotePanel(ctx: AppContext): NotePanel {
 
   const statusHost = h('p', { class: 'sidebar-status hidden' }, '');
 
-  const searchInput = h('input', { type: 'search', placeholder: 'Search title' }) as HTMLInputElement;
+  const searchInput = h('input', { type: 'search', placeholder: t('notePanel.searchPlaceholder') }) as HTMLInputElement;
   searchInput.addEventListener('input', () => {
     query = searchInput.value;
     void renderNoteList();
   });
 
-  const tagSearchInput = h('input', { type: 'text', class: 'tag-search-input', placeholder: 'Filter tags…' }) as HTMLInputElement;
+  const tagSearchInput = h('input', { type: 'text', class: 'tag-search-input', placeholder: t('notePanel.filterTagsPlaceholder') }) as HTMLInputElement;
   const tagsHost = h('div', { class: 'tag-chips' }, tagSearchInput);
-  const tagsExpandBtn = h('button', { type: 'button', class: 'tag-chips-expand hidden' }, 'Show more');
+  const tagsExpandBtn = h('button', { type: 'button', class: 'tag-chips-expand hidden' }, t('notePanel.showMore'));
   const tagsWrap = h('div', { class: 'tag-chips-wrap' }, tagsHost, tagsExpandBtn);
   const listHost = h('div', { class: 'note-list' });
 
@@ -76,10 +77,10 @@ export function createNotePanel(ctx: AppContext): NotePanel {
     if (!expanded) {
       const overflowing = tagsHost.scrollHeight > tagsHost.clientHeight + 1;
       tagsExpandBtn.classList.toggle('hidden', !overflowing);
-      tagsExpandBtn.textContent = 'Show more';
+      tagsExpandBtn.textContent = t('notePanel.showMore');
     } else {
       tagsExpandBtn.classList.remove('hidden');
-      tagsExpandBtn.textContent = 'Show less';
+      tagsExpandBtn.textContent = t('notePanel.showLess');
     }
     updateFade();
   }
@@ -134,7 +135,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
       const key = PIN_TAG;
       const el = h(
         'button',
-        { type: 'button', class: tagFilters.has(key) ? 'chip chip--pin active' : 'chip chip--pin', 'aria-label': 'Pin', title: 'Pin' },
+        { type: 'button', class: tagFilters.has(key) ? 'chip chip--pin active' : 'chip chip--pin', 'aria-label': t('common.pin'), title: t('common.pin') },
         icon('pin', 14)
       );
       el.addEventListener('click', () => {
@@ -199,7 +200,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
     const row = h(
       'div',
       { class: classes.join(' ') },
-      h('span', { class: 'note-title' }, note.title || 'Untitled page'),
+      h('span', { class: 'note-title' }, note.title || t('editor.untitledPage')),
       h('span', { class: 'note-time' }, formatWhen(note.updatedAt)),
       renderTagsLine(note.tags)
     );
@@ -207,24 +208,24 @@ export function createNotePanel(ctx: AppContext): NotePanel {
     row.addEventListener('click', () => navigate(`/note/${note.id}`));
 
     if (tab === 'trash') {
-      const restoreBtn = h('button', { type: 'button', class: 'ghost' }, 'Restore');
+      const restoreBtn = h('button', { type: 'button', class: 'ghost' }, t('common.restore'));
       restoreBtn.addEventListener('click', e => {
         e.stopPropagation();
         const doRestore = (): void => {
           void store.restoreNote(note.id).then(() => {
-            showToast('Page restored');
+            showToast(t('notePanel.pageRestored'));
             return renderNoteList();
           });
         };
         if (note.isPublic) confirmRestorePublished(doRestore);
         else doRestore();
       });
-      const purgeBtn = h('button', { type: 'button', class: 'danger' }, 'Delete forever');
+      const purgeBtn = h('button', { type: 'button', class: 'danger' }, t('notePanel.deleteForever'));
       purgeBtn.addEventListener('click', e => {
         e.stopPropagation();
-        confirmDialog('Delete forever', 'Permanently delete this note? This cannot be undone.', 'Delete forever', () => {
+        confirmDialog(t('notePanel.deleteForever'), t('notePanel.deleteForeverConfirmBody'), t('notePanel.deleteForever'), () => {
           void store.purgeNote(note.id).then(() => {
-            showToast('Page permanently deleted');
+            showToast(t('notePanel.pagePermanentlyDeleted'));
             return renderNoteList();
           });
         });
@@ -251,7 +252,7 @@ export function createNotePanel(ctx: AppContext): NotePanel {
     entries = entries.slice().sort((a, b) => b.updatedAt - a.updatedAt);
 
     if (entries.length === 0) {
-      listHost.append(h('p', { class: 'empty' }, 'No notes here yet.'));
+      listHost.append(h('p', { class: 'empty' }, t('notePanel.noNotesYet')));
       return;
     }
 
@@ -267,14 +268,14 @@ export function createNotePanel(ctx: AppContext): NotePanel {
     if (hasCached) {
       await renderNoteList();
     } else {
-      statusHost.textContent = 'Syncing…';
+      statusHost.textContent = t('syncStatus.syncing');
       statusHost.classList.remove('hidden');
     }
     try {
       await store.sync();
     } catch {
       statusHost.classList.add('hidden');
-      if (!hasCached) listHost.append(errorBanner('Sync failed. Showing the last known state.'));
+      if (!hasCached) listHost.append(errorBanner(t('notePanel.syncFailed')));
       return;
     }
     statusHost.classList.add('hidden');

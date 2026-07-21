@@ -1,4 +1,5 @@
 import { h, icon } from './dom';
+import { t } from '../i18n';
 import { CONTROL_KEYS, BOOLEAN_CONTROLS, classifyTag, getControlValue, setControlValue } from './controlTags';
 
 export const PIN_TAG = 'pin';
@@ -28,8 +29,8 @@ export function renderTagsEditor(
   const pinBtn = h('button', {
     type: 'button',
     class: 'tag-pin-toggle',
-    'aria-label': 'Pin',
-    title: 'Pin',
+    'aria-label': t('common.pin'),
+    title: t('common.pin'),
   }, icon('pin', 16));
   pinBtn.addEventListener('click', () => {
     if (tags.includes(PIN_TAG)) removeTag(PIN_TAG, true);
@@ -38,9 +39,11 @@ export function renderTagsEditor(
 
   const input = readOnly
     ? null
-    : (h('input', { type: 'text', class: 'tags-editor-input', placeholder: 'Add tags…' }) as HTMLInputElement);
+    : (h('input', { type: 'text', class: 'tags-editor-input', placeholder: t('tags.addTagsPlaceholder') }) as HTMLInputElement);
 
   const suggestHost = h('div', { class: 'tags-suggest hidden' });
+  let currentSuggestions: Suggestion[] = [];
+  let activeIndex = -1;
 
   function visibleTags(): string[] {
     return tags.filter(t => !BOOLEAN_CONTROLS.includes(t));
@@ -61,6 +64,7 @@ export function renderTagsEditor(
   }
 
   function commitWord(word: string): void {
+    if (word.startsWith(':')) word = word.slice(1);
     if (!word) return;
     const classified = classifyTag(word);
     if (classified.kind === 'control') {
@@ -84,22 +88,9 @@ export function renderTagsEditor(
     apply: () => void;
   }
 
-  function suggestionsFor(word: string): Suggestion[] {
-    const idx = word.indexOf(':');
-    if (idx === -1) return [];
-    const key = word.slice(0, idx);
-    const valuePrefix = word.slice(idx + 1).toLowerCase();
-    const spec = CONTROL_KEYS[key];
-
-    if (spec) {
-      const current = getControlValue(tags, key);
-      let values = spec.values.filter(v => v.toLowerCase().startsWith(valuePrefix));
-      if (current && values.includes(current)) values = [current, ...values.filter(v => v !== current)];
-      return values.map(v => ({ label: `${key}:${v}`, apply: () => applyControlValue(key, v) }));
-    }
-
+  function keySuggestions(prefix: string): Suggestion[] {
     return Object.keys(CONTROL_KEYS)
-      .filter(k => k.startsWith(key))
+      .filter(k => k.startsWith(prefix.toLowerCase()))
       .map(k => ({
         label: `${k}:`,
         apply: () => {
@@ -111,15 +102,40 @@ export function renderTagsEditor(
       }));
   }
 
+  function suggestionsFor(word: string): Suggestion[] {
+    const leadingColon = word.startsWith(':');
+    const body = leadingColon ? word.slice(1) : word;
+    const idx = body.indexOf(':');
+
+    if (idx === -1) return leadingColon ? keySuggestions(body) : [];
+
+    const key = body.slice(0, idx);
+    const valuePrefix = body.slice(idx + 1).toLowerCase();
+    const spec = CONTROL_KEYS[key];
+    if (!spec) return keySuggestions(key);
+
+    const current = getControlValue(tags, key);
+    let values = spec.values.filter(v => v.toLowerCase().startsWith(valuePrefix));
+    if (current && values.includes(current)) values = [current, ...values.filter(v => v !== current)];
+    return values.map(v => ({ label: `${key}:${v}`, apply: () => applyControlValue(key, v) }));
+  }
+
+  function highlightActive(): void {
+    const btns = Array.from(suggestHost.querySelectorAll('.tags-suggest-item'));
+    btns.forEach((b, i) => b.classList.toggle('active', i === activeIndex));
+    if (activeIndex >= 0) btns[activeIndex]?.scrollIntoView({ block: 'nearest' });
+  }
+
   function updateSuggestions(): void {
     if (!input) return;
-    const items = suggestionsFor(input.value.trim());
+    currentSuggestions = suggestionsFor(input.value.trim());
+    activeIndex = -1;
     suggestHost.replaceChildren();
-    if (items.length === 0) {
+    if (currentSuggestions.length === 0) {
       suggestHost.classList.add('hidden');
       return;
     }
-    for (const item of items) {
+    for (const item of currentSuggestions) {
       const btn = h('button', { type: 'button', class: 'tags-suggest-item' }, item.label);
       btn.addEventListener('mousedown', e => {
         e.preventDefault();
@@ -158,7 +174,7 @@ export function renderTagsEditor(
         updateSuggestions();
       }
     });
-    const removeBtn = h('button', { type: 'button', class: 'tag-chip-remove', 'aria-label': `Remove ${tag}` }, '×');
+    const removeBtn = h('button', { type: 'button', class: 'tag-chip-remove', 'aria-label': t('tags.removeTag', { tag }) }, '×');
     removeBtn.addEventListener('click', () => removeTag(tag));
     el.append(removeBtn);
     return el;
@@ -179,11 +195,45 @@ export function renderTagsEditor(
   if (input) {
     input.addEventListener('input', updateSuggestions);
     input.addEventListener('keydown', e => {
-      if (e.key === 'Escape') {
-        suggestHost.classList.add('hidden');
+      const open = !suggestHost.classList.contains('hidden') && currentSuggestions.length > 0;
+      if (e.key === 'ArrowDown') {
+        if (open) {
+          e.preventDefault();
+          activeIndex = (activeIndex + 1) % currentSuggestions.length;
+          highlightActive();
+        }
         return;
       }
-      if (e.key === ' ' || e.key === 'Enter' || e.key === ',') {
+      if (e.key === 'ArrowUp') {
+        if (open) {
+          e.preventDefault();
+          activeIndex = activeIndex <= 0 ? currentSuggestions.length - 1 : activeIndex - 1;
+          highlightActive();
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        suggestHost.classList.add('hidden');
+        activeIndex = -1;
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (open) {
+          currentSuggestions[activeIndex >= 0 ? activeIndex : 0].apply();
+          updateSuggestions();
+        } else {
+          commitInput();
+        }
+        return;
+      }
+      if (e.key === 'Tab' && open && activeIndex >= 0) {
+        e.preventDefault();
+        currentSuggestions[activeIndex].apply();
+        updateSuggestions();
+        return;
+      }
+      if (e.key === ' ' || e.key === ',') {
         e.preventDefault();
         commitInput();
         return;

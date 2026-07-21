@@ -74,13 +74,22 @@ user unlocks without retyping the password each launch:
   itself right after any successful password unlock (online or offline) if
   it isn't already on — so a desktop user is never asked for their password
   a second time on the same device without deliberately logging out. The
-  Settings → "Biometric / OS unlock" section (`settingsView.ts`) still shows
-  an explicit **Disable** action for anyone who wants to opt back out to
+  Settings → "Skip password on this device" section (`settingsView.ts`) still
+  shows an explicit **Disable** action for anyone who wants to opt back out to
   password-only; there's no UI path to opt back *in* manually since it's
   already on by default. `renderLock` reflects this: when a provider is
   available it calls `unlockProvider.unlock()` immediately on mount (a brief
   "Unlocking…" screen) and only falls back to showing the password form if
   that fails.
+- **Known to be failing in practice (2026-07-20).** The flow above is
+  implemented but has never actually taken effect on the maintainer's machine —
+  `biometric_enabled` is `0` and no keystore credential exists. The enable
+  failure was being swallowed and is now logged; see the Changes entry for the
+  full diagnosis. Treat "restarts are passwordless" as intended behavior, not
+  as verified behavior, until that log identifies and fixes the cause.
+- **There is no biometric prompt yet.** Despite the historical naming, the
+  keystore read is ungated — the sealed key is readable by anything running as
+  the signed-in OS user. Windows Hello / Touch ID gating remains a follow-up.
 
 ## Offline password unlock
 
@@ -101,8 +110,10 @@ the same envelope, reached via the password instead of the OS keystore.
 
 **Connection status.** `frontend/core/connection.ts` combines
 `navigator.onLine` and whether a valid access token is held into
-`offline`/`syncing`/`synced` (shown as "Offline"/"Syncing…"/"Online"),
-rendered as a chip in the sidebar's top brand row. While offline,
+`offline`/`syncing`/`synced`, merged with the editor's save state into the
+single control described in `docs/architecture/frontend-core/README.md`
+(`views/syncStatus.ts`) and currently mounted in three candidate placements
+pending a choice. While offline,
 `shareView.ts` and the editor's comment controls
 disable their server-only actions (share, unshare, publish, post/delete
 comment) instead of throwing — the write queue above already makes
@@ -203,8 +214,7 @@ The desktop-only piece of the notebook feature: a placeholder file droppable
 into any Windows (later macOS/Linux) folder that opens directly to a page in
 the notebook — e.g. a project folder gets a `.mmp` file instead of a loose
 `.txt`. Implemented (see Changes) — still the one item in the notebook
-feature that's native, platform-specific, and (like the rest of this shell)
-can't be verified without a live Rust toolchain.
+feature that's native and platform-specific.
 
 - **Two deep-link path shapes**, both routed through the same `memoza://`
   handler already used for password resets:
@@ -235,9 +245,10 @@ can't be verified without a live Rust toolchain.
   disabling the keystore-backed unlock itself (Settings → "Biometric / OS
   unlock") is wired; only the native Windows Hello / Touch ID gate on the
   keystore read is missing.
-- Not compiled/verified against a live Rust toolchain in this environment (none
-  was available) — the Rust scaffold should be checked with `cargo check` /
-  `tauri dev` before relying on it.
+- ~~Not compiled against a live Rust toolchain~~ — no longer true as of
+  2026-07-20: the shell is built and used regularly via
+  `npm run tauri build -- --bundles nsis`. Runtime behavior is exercised by the
+  maintainer's own daily use; there is still no automated test suite.
 - Mobile (iOS/Android) targets, auto-update signing, and installer code
   signing are packaging steps out of scope for this pass.
 
@@ -339,3 +350,80 @@ can't be verified without a live Rust toolchain.
   biometric `UnlockProvider` hook now exposed by `frontend/core/views/app.ts`.
   `IMPLEMENTATION-PLAN.md` deleted; decisions and gaps recorded above and in
   `table.md`.
+- 2026-07-20 (write-queue correctness) — Three defects in
+  `src/store/queue.ts`, the most serious of which was silently duplicating
+  notes:
+  - **Every other autosave forked a duplicate note.** `saveNote` baked
+    `base_rev` into the queued payload from the local row, but a successful
+    push never wrote the server's new `rev` back to `local_note` — only a
+    later `sync()` did, and `SYNC_TTL_MS` is 30 s against a 4 s autosave. So
+    push #1 succeeded (server `rev+1`, local unchanged), push #2 sent the same
+    stale `base_rev`, got the `409` conflict body, and
+    `forkConflictingUpdate()` dutifully created a "keep both" copy — of the
+    user's own consecutive edits to one note. Fixed by making `local_note.rev`
+    the single source of truth: the queued `update` op no longer carries
+    `base_rev` at all, `applyOp` resolves it from the local row at drain time,
+    and the server's returned `rev` is written straight back. This also removes
+    the redundant full `getNote()` re-fetch that the next `sync()` performed
+    for every note the user had edited (local/server `rev` now already agree).
+  - **One permanently-failing op blocked the entire queue forever.** Any error
+    `break`s the drain loop and retried at a flat 15 s with `attempts`
+    incremented but never read, so e.g. a `share` to a deleted recipient
+    stalled every later write indefinitely. Failures are now classified:
+    statuses in `UNRETRYABLE_STATUSES` (400/403/404/409/413/422) set a new
+    `write_queue.failed` flag and the drain **continues** past them; everything
+    else (network, 5xx, 408, 429) retries with exponential backoff, 15 s
+    doubling to a 5 min cap. `401` is deliberately *not* unretryable — the API
+    client auto-refreshes, so an escaping 401 means the session died, which is
+    fixed by re-authenticating, not by discarding the user's write.
+  - **Redundant update ops now coalesce.** A queued, not-yet-in-flight `update`
+    for the same note is superseded in place rather than appended, so a burst
+    of autosaves drains as one request. The in-flight row is tracked
+    (`inFlightId`) and never coalesced into, otherwise a save landing mid-drain
+    would be deleted by the success path that follows.
+- 2026-07-20 (account switch) — `saveLocalAccount()` overwrote the single
+  `local_account` row on sign-in but left `biometric_enabled = 1` and the OS
+  keystore holding the *previous* user's `wrapKey`, so biometric unlock for the
+  new user unsealed the wrong key and failed the DEK unwrap. It now detects a
+  changed `user_id` and clears the keystore entry, resets the flag (in the
+  `ON CONFLICT` clause, so it is atomic with the row swap), and calls
+  `wipeLocalStore()` — necessary because `local_note` queries are not scoped by
+  owner, so the previous user's rows would otherwise surface as undecryptable
+  entries. Known tradeoff: this discards any unsynced queued writes belonging
+  to the previous account, which cannot be pushed without their session anyway.
+- 2026-07-20 (error masking) — `getNote()` returned `null` for *every* failure,
+  making a network/5xx error indistinguishable from a genuinely missing note
+  ("Note not found" while simply offline). It now returns `null` only for a
+  real `404` and rethrows otherwise, matching the web store's existing
+  behavior.
+- 2026-07-20 (auto-unlock is already implemented, but silently failing) —
+  Product direction: the desktop app must never ask for a password on restart.
+  The machinery for that already exists and no new code was needed —
+  `renderLock` auto-unlocks through `UnlockProvider` when the OS-keystore key
+  is present, and `maybeEnableBiometric` in `authViews.ts` already tries to
+  seal it after **every** successful password unlock. It is nevertheless off in
+  practice: on the maintainer's machine `local_account.biometric_enabled` is
+  `0` and no `io.memoza.desktop` credential exists in Windows Credential
+  Manager, so the seal has never succeeded. The Rust side looks correct
+  (`seal_secret` is registered in `invoke_handler`, and the sealed value is a
+  44-char base64 string, far under Credential Manager's 2560-byte blob limit),
+  so the failure is on the JS side or in `keyring` at runtime — and it was
+  invisible because `maybeEnableBiometric` swallowed it with
+  `.catch(() => undefined)`. That catch now logs the underlying error instead,
+  which should identify the cause on the next run. **Open item: confirm the
+  seal actually succeeds; until it does, restarts will keep asking for a
+  password.**
+  Deliberately *not* added: a second auto-enable path in `desktop/main.ts`.
+  Core already owns this, and duplicating it would create exactly the kind of
+  two-sources-of-truth split that caused the `base_rev` duplicate-note bug.
+- 2026-07-20 (threat model widened, recorded) — Storing the wrapKey in the OS
+  keystore is no longer a niche opt-in; it is the mechanism that makes restarts
+  passwordless, i.e. the intended default posture. Consequence: anyone who can
+  use the signed-in OS account can open all notes on that device. This is the
+  standard desktop-app tradeoff, but it is a real widening of
+  `frontend/CLAUDE.md`'s "one narrow, deliberate exception" and was taken as an
+  explicit product decision. The native Windows Hello / Touch ID gate on the
+  keystore *read* remains unimplemented and is the follow-up that would restore
+  a real barrier. The Settings section was renamed from "Biometric / OS unlock"
+  to "Skip password on this device" because there is no biometric prompt today
+  and the old label implied one.

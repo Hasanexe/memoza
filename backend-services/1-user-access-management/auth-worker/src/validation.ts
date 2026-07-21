@@ -1,4 +1,5 @@
-import { isValidUsernameFormat } from '@memoza/shared';
+import { isValidUsernameFormat, isValidLanguage } from '@memoza/shared';
+import type { LanguageCode } from '@memoza/shared';
 
 const MAX_AUTH_HASH_LEN = 512;
 const MAX_PUBLIC_KEY_LEN = 2048;
@@ -31,4 +32,8 @@ export function validateRecoveryMode(value: unknown): value is 'private' | 'conv
 
 export function validateUsername(value: unknown): value is string {
   return typeof value === 'string' && isValidUsernameFormat(value);
+}
+
+export function validateLanguage(value: unknown): value is LanguageCode {
+  return isValidLanguage(value);
 }

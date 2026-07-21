@@ -6,7 +6,7 @@ import { importRecipientPublicKey } from '@memoza/core/crypto/keys';
 import { requireSession } from '@memoza/core/crypto/session';
 import { search as searchIndex } from '@memoza/core/search';
 import { getFormat } from '@memoza/core/views/controlTags';
-import { markSyncing } from '@memoza/core/connection';
+import { markSyncing, markSynced } from '@memoza/core/connection';
 import type { Store, DecryptedNoteSummary, DecryptedNote, DecryptedComment } from '@memoza/core/store/types';
 import type { NoteRow, FullNote } from '@memoza/core/api/notes';
 
@@ -164,6 +164,7 @@ export function createMemoryStore(): Store {
         body,
       };
       notes.set(id, state);
+      markSynced();
       return { ...toSummary(state), body };
     } catch (err) {
       if (err instanceof ApiError && err.status === 409 && err.body && typeof err.body === 'object' && 'note' in err.body) {

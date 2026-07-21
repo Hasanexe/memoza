@@ -11,6 +11,7 @@ this.
 |---|---|---|
 | `localStorage` | `user_email` | Last email, to prefill the lock screen and derive the KDF salt. Non-secret |
 | `localStorage` | `theme` | `light` / `dark` override; absent = follow `prefers-color-scheme` |
+| `localStorage` | `memoza_language` | UI language code (`i18n/languages.ts`'s `LANGUAGES`); absent = browser-detected. Mirrors the account's server-side `language` once signed in (`docs/architecture/1-user-access-management/README.md`'s `table.md`) |
 
 No access token, no refresh token (httpOnly cookie, set by `memoza-auth`), and
 no key material are ever persisted by `core`.

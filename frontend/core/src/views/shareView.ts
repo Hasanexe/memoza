@@ -5,15 +5,11 @@ import * as authApi from '../api/auth';
 import { requireSession } from '../crypto/session';
 import { connectionStatus, onConnectionChange } from '../connection';
 import { PUBLIC_APP_ORIGIN } from '../config';
-
-const PUBLISH_WARNING =
-  "Publishing stores this page as plaintext on Memoza's servers so anyone with the link can read it. This can't be undone — the only way to remove it is to delete the page.";
-
-const RESTORE_PUBLISHED_WARNING = 'This page was published. Restoring it puts it back on its public link immediately.';
+import { t } from '../i18n';
 
 export function confirmDialog(title: string, body: string, confirmLabel: string, onConfirm: () => void): void {
   openDialog(close => {
-    const cancelBtn = h('button', { type: 'button', class: 'ghost' }, 'Cancel');
+    const cancelBtn = h('button', { type: 'button', class: 'ghost' }, t('common.cancel'));
     cancelBtn.addEventListener('click', close);
     const confirmBtn = h('button', { type: 'button', class: 'primary' }, confirmLabel);
     confirmBtn.addEventListener('click', () => {
@@ -25,11 +21,11 @@ export function confirmDialog(title: string, body: string, confirmLabel: string,
 }
 
 export function confirmPublish(onConfirm: () => void): void {
-  confirmDialog('Make this page public', PUBLISH_WARNING, 'Make public', onConfirm);
+  confirmDialog(t('share.makePagePublicTitle'), t('share.publishWarning'), t('share.makePublic'), onConfirm);
 }
 
 export function confirmRestorePublished(onConfirm: () => void): void {
-  confirmDialog('Restore published page', RESTORE_PUBLISHED_WARNING, 'Restore', onConfirm);
+  confirmDialog(t('share.restorePublishedTitle'), t('share.restorePublishedWarning'), t('common.restore'), onConfirm);
 }
 
 export function publicPageUrl(pageNo: number): string {
@@ -40,28 +36,28 @@ export function publicPageUrl(pageNo: number): string {
 export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublished: (pageNo: number) => void): void {
   const { store } = ctx;
 
-  const shareEmailInput = h('input', { type: 'email', placeholder: 'Recipient email' }) as HTMLInputElement;
+  const shareEmailInput = h('input', { type: 'email', placeholder: t('share.recipientEmail') }) as HTMLInputElement;
   const shareStatus = h('div', {});
-  const shareBtn = h('button', { type: 'button', class: 'primary' }, 'Share');
+  const shareBtn = h('button', { type: 'button', class: 'primary' }, t('common.share'));
   shareBtn.addEventListener('click', async () => {
     clear(shareStatus);
     const email = shareEmailInput.value.trim();
     if (!email) return;
     try {
       await store.shareNote(note.id, email);
-      shareStatus.append(infoBanner(`Shared with ${email}`));
+      shareStatus.append(infoBanner(t('share.sharedWith', { email })));
       shareEmailInput.value = '';
     } catch (err) {
-      shareStatus.append(errorBanner(err instanceof Error ? err.message : 'Failed to share'));
+      shareStatus.append(errorBanner(err instanceof Error ? err.message : t('share.failedToShare')));
     }
   });
 
   const unshareEmailInput = h('input', {
     type: 'email',
-    placeholder: 'Recipient email to remove',
+    placeholder: t('share.recipientEmailToRemove'),
   }) as HTMLInputElement;
   const unshareStatus = h('div', {});
-  const unshareBtn = h('button', { type: 'button', class: 'danger' }, 'Revoke access');
+  const unshareBtn = h('button', { type: 'button', class: 'danger' }, t('share.revokeAccess'));
   unshareBtn.addEventListener('click', async () => {
     clear(unshareStatus);
     const email = unshareEmailInput.value.trim();
@@ -69,10 +65,10 @@ export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublis
     try {
       const recipient = await authApi.lookupPublicKey(email);
       await store.unshareNote(note.id, recipient.user_id);
-      unshareStatus.append(infoBanner(`Revoked access for ${email}`));
+      unshareStatus.append(infoBanner(t('share.revokedAccessFor', { email })));
       unshareEmailInput.value = '';
     } catch (err) {
-      unshareStatus.append(errorBanner(err instanceof Error ? err.message : 'Failed to revoke access'));
+      unshareStatus.append(errorBanner(err instanceof Error ? err.message : t('share.failedToRevoke')));
     }
   });
 
@@ -87,13 +83,13 @@ export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublis
         h(
           'div',
           {},
-          h('p', {}, 'This page is public.'),
+          h('p', {}, t('share.pageIsPublic')),
           url ? h('a', { href: url, target: '_blank', rel: 'noopener', class: 'public-link' }, url) : null
         )
       );
       return;
     }
-    const publishBtn = h('button', { type: 'button', class: 'primary' }, 'Make public');
+    const publishBtn = h('button', { type: 'button', class: 'primary' }, t('share.makePublic'));
     publishBtn.addEventListener('click', () => {
       confirmPublish(() => {
         void (async () => {
@@ -105,7 +101,7 @@ export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublis
             renderPublishSection();
             onPublished(pageNo);
           } catch (err) {
-            publishStatus.append(errorBanner(err instanceof Error ? err.message : 'Failed to publish'));
+            publishStatus.append(errorBanner(err instanceof Error ? err.message : t('share.failedToPublish')));
           }
         })();
       });
@@ -126,23 +122,23 @@ export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublis
 
   openDialog(
     close => {
-      const closeBtn = h('button', { type: 'button', class: 'ghost' }, 'Close');
+      const closeBtn = h('button', { type: 'button', class: 'ghost' }, t('common.close'));
       closeBtn.addEventListener('click', close);
 
       return h(
         'div',
         { class: 'dialog' },
-        h('h2', {}, 'Share note'),
-        h('p', {}, 'Sharing is read-only — recipients can read and comment, not edit.'),
-        h('label', {}, 'Share with', shareEmailInput),
+        h('h2', {}, t('share.shareNoteTitle')),
+        h('p', {}, t('share.shareReadOnlyNotice')),
+        h('label', {}, t('share.shareWith'), shareEmailInput),
         shareBtn,
         shareStatus,
         h('hr', {}),
-        h('label', {}, 'Revoke access', unshareEmailInput),
+        h('label', {}, t('share.revokeAccess'), unshareEmailInput),
         unshareBtn,
         unshareStatus,
         h('hr', {}),
-        h('h2', {}, 'Public page'),
+        h('h2', {}, t('share.publicPage')),
         publishSection,
         publishStatus,
         closeBtn

@@ -14,6 +14,7 @@ import { requireSession, logout as clearSession, setSession, setAccessToken } fr
 import { decodeAccessToken } from '../crypto/jwt';
 import { KDF_ITERATIONS, MIN_PASSWORD_LENGTH, EMAIL_STORAGE_KEY } from '../config';
 import { performLogout } from './authViews';
+import { t, getLanguage, setLanguage, LANGUAGES } from '../i18n';
 
 const THEME_KEY = 'theme';
 
@@ -25,7 +26,7 @@ export function renderSettings(ctx: AppContext): void {
 
   const backBtn = h(
     'button',
-    { type: 'button', class: 'icon-btn', 'aria-label': 'Back to notes', title: 'Back to notes' },
+    { type: 'button', class: 'icon-btn', 'aria-label': t('common.backToNotes'), title: t('common.backToNotes') },
     icon('chevronLeft')
   );
   backBtn.addEventListener('click', () => navigate('/'));
@@ -35,9 +36,10 @@ export function renderSettings(ctx: AppContext): void {
       'div',
       { class: 'main-inner settings-view' },
       backBtn,
-      h('h1', {}, 'Settings'),
+      h('h1', {}, t('settings.title')),
       renderAccountSection(),
       renderThemeSection(),
+      renderLanguageSection(),
       renderPasswordSection(),
       ctx.biometricControl ? renderBiometricSection(ctx.biometricControl) : null,
       renderExportSection(),
@@ -47,18 +49,27 @@ export function renderSettings(ctx: AppContext): void {
   );
 
   function renderAccountSection(): HTMLElement {
-    const logoutBtn = h('button', { type: 'button', class: 'ghost' }, 'Log out');
-    logoutBtn.addEventListener('click', () => performLogout(ctx));
-    return h('section', {}, h('h2', {}, 'Account'), h('p', {}, session.email), logoutBtn);
+    const logoutBtn = h('button', { type: 'button', class: 'primary' }, t('auth.logOut'));
+    logoutBtn.addEventListener('click', () => void performLogout(ctx));
+    return h(
+      'section',
+      {},
+      h('h2', {}, t('settings.account')),
+      h('p', { class: 'settings-email' }, session.email),
+      ctx.platform === 'native'
+        ? h('p', { class: 'settings-hint' }, t('settings.loggingOutDeletesDevice'))
+        : null,
+      logoutBtn
+    );
   }
 
   function renderThemeSection(): HTMLElement {
     const select = h(
       'select',
       {},
-      h('option', { value: 'system' }, 'System'),
-      h('option', { value: 'light' }, 'Light'),
-      h('option', { value: 'dark' }, 'Dark')
+      h('option', { value: 'system' }, t('settings.themeSystem')),
+      h('option', { value: 'light' }, t('settings.themeLight')),
+      h('option', { value: 'dark' }, t('settings.themeDark'))
     ) as HTMLSelectElement;
     select.value = localStorage.getItem(THEME_KEY) ?? 'system';
     select.addEventListener('change', () => {
@@ -70,7 +81,28 @@ export function renderSettings(ctx: AppContext): void {
         document.documentElement.setAttribute('data-theme', select.value);
       }
     });
-    return h('section', {}, h('h2', {}, 'Appearance'), h('label', {}, 'Theme', select));
+    return h('section', {}, h('h2', {}, t('settings.appearance')), h('label', {}, t('settings.theme'), select));
+  }
+
+  function renderLanguageSection(): HTMLElement {
+    const select = h(
+      'select',
+      {},
+      ...LANGUAGES.map(l => h('option', { value: l.code }, l.nativeName))
+    ) as HTMLSelectElement;
+    select.value = getLanguage();
+    select.addEventListener('change', () => {
+      const value = select.value;
+      void setLanguage(value);
+      authApi.updateLanguage(value).catch(() => undefined);
+    });
+    return h(
+      'section',
+      {},
+      h('h2', {}, t('settings.language')),
+      h('p', {}, t('settings.languageHint')),
+      h('label', {}, t('settings.language'), select)
+    );
   }
 
   function renderPasswordSection(): HTMLElement {
@@ -82,17 +114,17 @@ export function renderSettings(ctx: AppContext): void {
     }) as HTMLInputElement;
     const confirmInput = h('input', { type: 'password', autocomplete: 'new-password' }) as HTMLInputElement;
     const statusHost = h('div', {});
-    const submitBtn = h('button', { type: 'button', class: 'primary' }, 'Change password');
+    const submitBtn = h('button', { type: 'button', class: 'primary' }, t('settings.changePassword'));
 
     submitBtn.addEventListener('click', async () => {
       if (submitBtn.disabled) return;
       clear(statusHost);
       if (newInput.value.length < MIN_PASSWORD_LENGTH) {
-        statusHost.append(errorBanner(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`));
+        statusHost.append(errorBanner(t('auth.passwordTooShort', { min: MIN_PASSWORD_LENGTH })));
         return;
       }
       if (newInput.value !== confirmInput.value) {
-        statusHost.append(errorBanner('Passwords do not match'));
+        statusHost.append(errorBanner(t('auth.passwordMismatch')));
         return;
       }
       submitBtn.disabled = true;
@@ -135,9 +167,9 @@ export function renderSettings(ctx: AppContext): void {
         oldInput.value = '';
         newInput.value = '';
         confirmInput.value = '';
-        statusHost.append(infoBanner('Password changed. Other devices have been logged out.'));
+        statusHost.append(infoBanner(t('settings.passwordChanged')));
       } catch (err) {
-        statusHost.append(errorBanner(err instanceof ApiError ? err.message : 'Failed to change password'));
+        statusHost.append(errorBanner(err instanceof ApiError ? err.message : t('settings.failedToChangePassword')));
       } finally {
         submitBtn.disabled = false;
       }
@@ -146,21 +178,21 @@ export function renderSettings(ctx: AppContext): void {
     return h(
       'section',
       {},
-      h('h2', {}, 'Change password'),
-      h('p', {}, 'Your recovery key does not change and cannot be shown again.'),
-      h('label', {}, 'Current password', oldInput),
-      h('label', {}, `New password (min ${MIN_PASSWORD_LENGTH} characters)`, newInput),
-      h('label', {}, 'Confirm new password', confirmInput),
+      h('h2', {}, t('settings.changePassword')),
+      h('p', {}, t('settings.recoveryKeyUnchanged')),
+      h('label', {}, t('settings.currentPassword'), oldInput),
+      h('label', {}, t('auth.newPasswordMinHint', { min: MIN_PASSWORD_LENGTH }), newInput),
+      h('label', {}, t('auth.confirmNewPassword'), confirmInput),
       submitBtn,
       statusHost
     );
   }
 
   function renderBiometricSection(control: NonNullable<AppContext['biometricControl']>): HTMLElement {
-    const passwordInput = h('input', { type: 'password', placeholder: 'Current password' }) as HTMLInputElement;
+    const passwordInput = h('input', { type: 'password', placeholder: t('settings.currentPassword') }) as HTMLInputElement;
     const statusHost = h('div', {});
-    const enableBtn = h('button', { type: 'button', class: 'primary' }, 'Enable');
-    const disableBtn = h('button', { type: 'button', class: 'hidden' }, 'Disable');
+    const enableBtn = h('button', { type: 'button', class: 'primary' }, t('settings.enable'));
+    const disableBtn = h('button', { type: 'button', class: 'hidden' }, t('settings.disable'));
 
     void control.isEnabled().then(enabled => {
       enableBtn.classList.toggle('hidden', enabled);
@@ -174,9 +206,9 @@ export function renderSettings(ctx: AppContext): void {
         passwordInput.value = '';
         enableBtn.classList.add('hidden');
         disableBtn.classList.remove('hidden');
-        statusHost.append(infoBanner('Biometric unlock enabled'));
+        statusHost.append(infoBanner(t('settings.biometricEnabled')));
       } catch (err) {
-        statusHost.append(errorBanner(err instanceof ApiError ? err.message : 'Failed to enable biometric unlock'));
+        statusHost.append(errorBanner(err instanceof ApiError ? err.message : t('settings.biometricEnableFailed')));
       }
     });
 
@@ -185,15 +217,15 @@ export function renderSettings(ctx: AppContext): void {
       await control.disable();
       disableBtn.classList.add('hidden');
       enableBtn.classList.remove('hidden');
-      statusHost.append(infoBanner('Biometric unlock disabled'));
+      statusHost.append(infoBanner(t('settings.biometricDisabled')));
     });
 
     return h(
       'section',
       {},
-      h('h2', {}, 'Biometric / OS unlock'),
-      h('p', {}, 'Skip retyping your password on this device using Windows Hello, Touch ID, or your OS keychain.'),
-      h('label', {}, 'Current password', passwordInput),
+      h('h2', {}, t('settings.skipPasswordTitle')),
+      h('p', {}, t('settings.skipPasswordBody')),
+      h('label', {}, t('settings.currentPassword'), passwordInput),
       enableBtn,
       disableBtn,
       statusHost
@@ -212,7 +244,7 @@ export function renderSettings(ctx: AppContext): void {
 
   function renderExportSection(): HTMLElement {
     const statusHost = h('div', {});
-    const btn = h('button', { type: 'button', class: 'primary' }, 'Export all notes (.md)');
+    const btn = h('button', { type: 'button', class: 'primary' }, t('settings.exportButton'));
     btn.addEventListener('click', async () => {
       if (btn.disabled) return;
       clear(statusHost);
@@ -222,21 +254,23 @@ export function renderSettings(ctx: AppContext): void {
         const fulls = await Promise.all(summaries.map(summary => store.getNote(summary.id)));
         const parts = fulls.filter((full): full is NonNullable<typeof full> => full !== null).map(full => `# ${full.title}\n\n${full.body}\n`);
         if (parts.length === 0) {
-          statusHost.append(infoBanner('No notes to export'));
+          statusHost.append(infoBanner(t('settings.exportNoNotes')));
           return;
         }
         downloadText('memoza-notes-export.md', parts.join('\n---\n\n'));
+      } catch {
+        statusHost.append(errorBanner(t('settings.exportFailed')));
       } finally {
         btn.disabled = false;
       }
     });
-    return h('section', {}, h('h2', {}, 'Export'), btn, statusHost);
+    return h('section', {}, h('h2', {}, t('settings.export')), btn, statusHost);
   }
 
   function renderImportSection(): HTMLElement {
     const fileInput = h('input', { type: 'file', accept: '.md', multiple: 'true' }) as HTMLInputElement;
     const statusHost = h('div', {});
-    const btn = h('button', { type: 'button', class: 'primary' }, 'Import');
+    const btn = h('button', { type: 'button', class: 'primary' }, t('settings.importButton'));
     btn.addEventListener('click', async () => {
       if (btn.disabled) return;
       clear(statusHost);
@@ -251,7 +285,7 @@ export function renderSettings(ctx: AppContext): void {
           await store.saveNote(null, title, text, []);
           imported++;
         }
-        statusHost.append(infoBanner(`Imported ${imported} note(s) as new notes`));
+        statusHost.append(infoBanner(t('settings.importedCount', { count: imported })));
         fileInput.value = '';
       } finally {
         btn.disabled = false;
@@ -260,8 +294,8 @@ export function renderSettings(ctx: AppContext): void {
     return h(
       'section',
       {},
-      h('h2', {}, 'Import'),
-      h('p', {}, 'Each imported .md file becomes a new note you own.'),
+      h('h2', {}, t('settings.import')),
+      h('p', {}, t('settings.importHint')),
       fileInput,
       btn,
       statusHost
@@ -269,14 +303,14 @@ export function renderSettings(ctx: AppContext): void {
   }
 
   function renderDeleteSection(): HTMLElement {
-    const passwordInput = h('input', { type: 'password', placeholder: 'Current password' }) as HTMLInputElement;
-    const confirmInput = h('input', { type: 'text', placeholder: 'Type DELETE to confirm' }) as HTMLInputElement;
+    const passwordInput = h('input', { type: 'password', placeholder: t('settings.currentPassword') }) as HTMLInputElement;
+    const confirmInput = h('input', { type: 'text', placeholder: t('settings.typeDeleteToConfirm') }) as HTMLInputElement;
     const statusHost = h('div', {});
-    const btn = h('button', { type: 'button', class: 'danger' }, 'Delete account');
+    const btn = h('button', { type: 'button', class: 'danger' }, t('settings.deleteAccount'));
     btn.addEventListener('click', async () => {
       clear(statusHost);
       if (confirmInput.value !== 'DELETE') {
-        statusHost.append(errorBanner('Type DELETE to confirm'));
+        statusHost.append(errorBanner(t('settings.typeDeleteToConfirm')));
         return;
       }
       try {
@@ -287,16 +321,16 @@ export function renderSettings(ctx: AppContext): void {
         localStorage.removeItem(EMAIL_STORAGE_KEY);
         navigate('/login');
       } catch (err) {
-        statusHost.append(errorBanner(err instanceof ApiError ? err.message : 'Failed to delete account'));
+        statusHost.append(errorBanner(err instanceof ApiError ? err.message : t('settings.failedToDeleteAccount')));
       }
     });
     return h(
       'section',
       { class: 'danger-zone' },
-      h('h2', {}, 'Danger zone'),
-      h('p', {}, 'This permanently deletes your account and every note you own.'),
-      h('label', {}, 'Password', passwordInput),
-      h('label', {}, 'Confirmation', confirmInput),
+      h('h2', {}, t('settings.dangerZone')),
+      h('p', {}, t('settings.deleteAccountBody')),
+      h('label', {}, t('settings.currentPassword'), passwordInput),
+      h('label', {}, t('settings.confirmation'), confirmInput),
       btn,
       statusHost
     );

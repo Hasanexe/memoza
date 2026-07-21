@@ -24,7 +24,6 @@ async function sendEmail(
 export async function sendActivation(
   env: { RESEND_API_KEY: string; RESEND_FROM: string; FRONTEND_ORIGIN: string },
   email: string,
-  name: string,
   token: string
 ): Promise<void> {
   const link = `${env.FRONTEND_ORIGIN}/#/activate?token=${encodeURIComponent(token)}`;
@@ -32,7 +31,7 @@ export async function sendActivation(
     env,
     email,
     'Activate your Memoza account',
-    `<p>Hi ${name}, activate your account: <a href="${link}">${link}</a></p><p>This link expires soon and can only be used once.</p>`
+    `<p>Activate your account (${email}): <a href="${link}">${link}</a></p><p>This link expires soon and can only be used once.</p>`
   );
 }
 
@@ -45,7 +44,7 @@ export async function sendAlreadyRegistered(
     env,
     email,
     'You already have a Memoza account',
-    `<p>You already have an account with this email. <a href="${link}">Forgot your password?</a></p>`
+    `<p>You already have an account with ${email}. <a href="${link}">Forgot your password?</a></p>`
   );
 }
 
@@ -59,6 +58,6 @@ export async function sendPasswordReset(
     env,
     email,
     'Reset your Memoza password',
-    `<p>Reset your password: <a href="${link}">${link}</a></p><p>This link expires soon and can only be used once.</p>`
+    `<p>Reset your password (${email}): <a href="${link}">${link}</a></p><p>This link expires soon and can only be used once.</p>`
   );
 }

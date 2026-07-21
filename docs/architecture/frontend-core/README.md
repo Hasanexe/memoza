@@ -142,7 +142,8 @@ Matching the auth service's generic-202 + activation redesign
 (`docs/architecture/1-user-access-management/README.md`, "Registration &
 activation"):
 
-- The **register form drops the username field** (email, name, password only).
+- The **register form drops the username field** (email, password, language
+  only — see "Internationalization (i18n)" below for the language picker).
   After submit it always shows the recovery key once (generated client-side —
   this is the only moment it exists), then a generic "check your email to
   activate" screen — the same screen whether or not the email already had an
@@ -155,6 +156,62 @@ activation"):
   (activation never grants a session). A `409` keeps the user on the picker.
 - The **login view** handles `403 "Not activated"` with a "check your email to
   activate" message, distinct from the generic `401` invalid-credentials error.
+
+## Internationalization (i18n)
+
+`i18n/` is a small, framework-free module: `languages.ts` lists the 32
+supported locale codes (`LANGUAGES`, each with an English name, native name,
+and `rtl` flag) plus `detectLanguage()` (matches `navigator.languages` against
+the supported list, falling back to `en`); `en.ts` is the canonical English
+string catalog (flat dot-keys like `'auth.email'`, typed as `StringKey`);
+`locales/{code}.ts` (one file per non-English language) each export the same
+key set translated; `index.ts` exposes `t(key, vars?)`, `getLanguage()`,
+`setLanguage(code)`, `onLanguageChange(fn)`, and `initLanguage()`.
+
+- **Lazy-loaded per language.** `index.ts`'s `loaders` map does
+  `() => import('./locales/xx')` per code, so a session only ever downloads
+  its own language's dictionary (plus English, bundled as the fallback) — the
+  other 30 files never ship to that user. This is what keeps 32 languages
+  cheap: the runtime/storage cost is one small JSON-like module per session,
+  not thirty-two.
+- **Storage and detection**: `initLanguage()` (called once by each shell's
+  `main.ts`, before `mountApp()`) reads `localStorage`'s `memoza_language` key
+  if present, otherwise calls `detectLanguage()`; `setLanguage()` persists the
+  choice back to the same key and sets `document.documentElement.lang`/`dir`
+  (`dir="rtl"` for `ar`/`he`/`ur`). This is a client-only default for
+  anonymous/unauthenticated screens (login, register before submit) — once a
+  session exists, the account's stored `language` (`docs/architecture/1-user-access-management/README.md`)
+  is the source of truth and overwrites it (see below).
+- **Server sync**: the registration form's language `<select>` defaults to
+  `getLanguage()` and is included in `POST /auth/register`; `POST /auth/login`
+  returns the account's stored `language`, applied via
+  `setLanguage(result.language)` right after a successful unlock so a second
+  device converges on the same choice; Settings' own language section calls
+  `setLanguage()` immediately (for a responsive local UI) and best-effort
+  `PUT /auth/language` in the background (failure is swallowed — a stale
+  server-side preference has no real consequence, so this isn't worth a retry
+  UI).
+- **Re-render on change, not a reactive framework.** `app.ts`'s `mountApp`
+  subscribes `onLanguageChange(() => { teardownShell(); render(); })` once, at
+  mount — the one place that knows how to rebuild the whole authenticated
+  shell. Every view function calls `t()` inline during its own render, so a
+  full re-render (the same mechanism lock/logout already use) is sufficient;
+  no per-component subscriptions. Changing the language on the registration
+  screen re-renders that screen from scratch (via the same route), which
+  resets typed field values — accepted as a minor rough edge rather than
+  adding value-preservation machinery across a full rebuild.
+- **Known gap — not translated**: `dom.ts`'s `relativeTime()` ("`25 min ago`"
+  style strings used by the sync-status chip) and the literal color-tag names
+  (`red`/`orange`/… shown as chip tooltips in `notePanel.ts`/`controlTags.ts`)
+  are still English-only; they weren't part of the initial string inventory
+  and are low-visibility enough to defer rather than block the rest of this
+  build.
+- **Translation quality**: the 31 non-English `locales/*.ts` files were
+  machine-translated (by Claude) in one pass, not reviewed by native speakers.
+  Good enough to ship the feature and validate the mechanism end-to-end;
+  flagged here so a follow-up native-speaker review is a known, deliberate
+  task — especially for the security-critical copy (recovery-key warning,
+  publish warning, account-deletion copy) where precise wording matters most.
 
 ## Persistent shell, note panel, and mobile layout
 
@@ -326,6 +383,16 @@ password field.
 
 ## Changes
 
+- 2026-07-20 (i18n) — Added the `i18n/` subsystem (32 languages) — see
+  "Internationalization (i18n)" above for the full shape. Registration gained
+  a language picker (auto-detected from the browser, changeable before
+  submit, replacing the dropped `name` field — see the auth service's
+  Changes); Settings gained a matching language section. Every view file
+  (`authViews`, `settingsView`, `editorView`, `notePanel`, `sidebar`,
+  `shareView`, `tagsEditor`, `publicReaderView`, `syncStatus`, `app`) had its
+  hardcoded UI strings extracted into `t()` calls against the new catalog.
+  `frontend/web/src/main.ts` and `frontend/desktop/src/main.ts` both gained an
+  `await initLanguage()` before `mountApp()`.
 - 2026-07-19 (navigation redesign) — Second UI pass on top of the same day's
   render-architecture work below:
   - **Sidebar became a picker↔section drill-in** instead of showing the
@@ -626,3 +693,83 @@ password field.
   `.claude/skills/memoza-design`'s "lowercase wordmark" rule — flagged, not
   silently changed; the skill file itself is unchanged pending a decision on
   whether to update it to match.
+- 2026-07-20 (autosave rework + sync indicator) — Four autosave defects fixed
+  in `views/editorView.ts`:
+  - **Half-typed tags were being committed by autosave.** `save()`
+    unconditionally called `tagsEditor.flushPendingInput()`, which commits
+    whatever text sits in the tag input. A debounce started by an *earlier*
+    title/body edit would therefore turn a partly-typed tag into a chip
+    mid-keystroke. `save()` now takes `flushTags` and defaults to
+    `tagsEditor.getTags()`; only the teardown paths (`hashchange`, `pagehide`,
+    `visibilitychange → hidden`) flush, because those are the cases where the
+    tag input's own `blur → commitInput` listener does *not* fire (removing a
+    focused element fires no blur event). Typing in the tag field already never
+    triggered a save — only committing a tag calls `onChange` — so that side
+    needed no change.
+  - **The full note index was rebuilt on every save.** `refreshPageBar()` calls
+    `store.listNotes()` (decrypt + sort of every note); it ran after each
+    autosave, i.e. every ~4 s while editing. It now runs only when `pageNo`
+    actually changes — in practice the first save of a new note.
+  - **Failed saves retried forever at a flat 4 s** with no user-visible
+    affordance. Retries are now exponential (4 s doubling, capped at 60 s) and
+    the status line offers an explicit "Retry now" button, which resets the
+    backoff.
+  - `AppContext` gained `refresh` so views can re-render after a manual sync.
+- 2026-07-20 (last-sync indicator) — The sidebar connection chip became a
+  `<button>` that shows a relative time ("just now", "25 min ago") instead of
+  the word "Online", with a refresh glyph that fades in on hover and spins
+  while syncing; clicking it forces `store.sync(true)`. Deliberately **no
+  polling**: the label re-renders from the locally held `lastSyncAt` on a 30 s
+  interval and on every `onConnectionChange` emit — it never calls the API to
+  find out when it last synced. `connection.ts` gained `markSynced()` for that,
+  fired where a network round-trip actually succeeds (web: a successful
+  `updateNote`; desktop: a successful write-queue drain), *not* at save time —
+  on desktop a save only reaches the local SQLite store and the queue, so
+  treating it as "synced" would be a lie. The visible label carries no "click
+  to sync" text by product direction; the affordance is the hover/cursor state,
+  with the explicit wording living in `aria-label`/`title` for screen readers.
+- 2026-07-20 (navigation + lock, second pass) — Sidebar became a permanent
+  64px **icon rail**: brand mark, `+`, the three section icons, then settings
+  and (native only) lock pinned to the bottom. The collapse/expand buttons and
+  the `sidebarCollapsed` persistence are gone — there is no open/closed state
+  any more. The rail no longer hosts a `NotePanel`: search, tag filter, and the
+  note list live only in `.main`, so `ensureShell` now builds **one** panel
+  instead of two (the second instance was decrypting and rendering the same
+  list twice on every navigation). The account row moved out of the rail — the
+  signed-in email now appears only in Settings → Account, since 64px cannot
+  show an address.
+- 2026-07-20 (lock vs log out) — Two distinct actions, native only:
+  - **Lock** (`lockSession`) clears the in-memory session and nothing else —
+    email, `local_account`, SQLite notes, and the write queue all survive, so
+    the unlock screen asks only for a password. This is exactly what an app
+    restart already did; the button just makes it available on demand.
+  - **Log out** (`performLogout`) additionally revokes the refresh token, runs
+    `onLogout` (wipes the local store), and forgets the saved email. On native
+    it now always confirms first, stating that local data will be deleted and
+    pointing at Lock as the non-destructive alternative.
+  `performLogout` became async and reads the pending-write count from the new
+  optional `Store.pendingWriteCount()` rather than the in-memory counter. That
+  counter is only populated once a session exists, so it was always `0` at the
+  unlock screen — meaning logging out from there silently destroyed unsynced
+  writes without ever showing the warning. Web has no queue and falls back to
+  the in-memory value.
+- 2026-07-20 (merged save/sync indicator) — Save state and sync state are now
+  one control, per product direction that they describe the same thing.
+  `connection.ts` gained a `saveState` field (`idle`/`unsaved`/`saving`/
+  `error`) which `editorView` drives via `markSaveState()`; the shared
+  `views/syncStatus.ts` renders whichever is more urgent — an in-flight save
+  wins, otherwise it shows offline/pending or the relative last-sync time.
+  Clicking forces a sync. Still no polling: the label re-renders from local
+  state on a 30 s tick and on every connection event.
+  It is currently mounted in **three** places at once — `rail`, `panel`, and
+  `page` variants — deliberately, so the placements can be compared in a real
+  build before one is chosen. **Two of the three should be deleted once picked.**
+  The editor keeps a separate small notice line for the two things the merged
+  indicator cannot express: the "saved as a new copy" conflict message and the
+  "Retry now" button.
+- 2026-07-20 (`platform` flag) — `AppContext.platform` (`'web' | 'native'`)
+  replaces inferring the shell from which optional callbacks happen to be
+  present. Native-only affordances (lock, the destructive-logout warning) key
+  off it; mobile-vs-desktop stays a CSS breakpoint concern, since at ≤760px the
+  rail is hidden entirely and the lock button moves to the main top bar and the
+  editor toolbar.
