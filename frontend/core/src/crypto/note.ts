@@ -27,7 +27,7 @@ export async function unwrapCekWithDek(dek: CryptoKey, wrapped: string): Promise
 }
 
 export async function unwrapCekWithDekExtractable(dek: CryptoKey, wrapped: string): Promise<CryptoKey> {
-  return unwrapKeyWithIv(dek, wrapped, 'raw', { name: 'AES-GCM' }, true, []);
+  return unwrapKeyWithIv(dek, wrapped, 'raw', { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
 }
 
 export async function wrapCekWithPublicKey(publicKey: CryptoKey, cek: CryptoKey): Promise<string> {

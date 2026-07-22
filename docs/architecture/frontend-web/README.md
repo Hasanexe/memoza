@@ -269,9 +269,10 @@ in-memory `store` impl and the app entry, and the Tauri shell later reuses
   a `<style>` block (node fills, edge strokes, fonts) and styled HTML notes
   (`format: html`) carry `<style>`/`style="…"`; `style-src 'self'` blocks every
   style the browser parses from markup, so both rendered unstyled with a console
-  violation in production. No code change was needed — the existing
-  DOMPurify-sanitized `renderContent` path in `frontend-core`'s `views/
-  markdown.ts` now applies styles as authored. Deliberate, scoped tradeoff:
+  violation in production. This CSP change was necessary but **not sufficient**
+  for `format: html` notes — see `frontend-core`'s 2026-07-22 entry: DOMPurify's
+  default drops `<style>`, so `renderContent`'s html path also needed
+  `{ FORCE_BODY: true }`. Deliberate, scoped tradeoff:
   `style-src` is the only directive relaxed; `script-src`, `img-src`, and
   `connect-src` stay `'self'`-scoped, so there is no code-execution or
   external-exfiltration path — the residual risk is local visual defacement of a

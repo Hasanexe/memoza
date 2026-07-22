@@ -8,14 +8,14 @@ let mermaidModule: MermaidModule | null = null;
 async function ensureMermaid(): Promise<MermaidModule> {
   if (!mermaidModule) {
     mermaidModule = await import('mermaid');
-    mermaidModule.default.initialize({ startOnLoad: false, securityLevel: 'strict' });
+    mermaidModule.default.initialize({ startOnLoad: false, securityLevel: 'strict', htmlLabels: false, suppressErrorRendering: true });
   }
   return mermaidModule;
 }
 
 export async function renderContent(host: HTMLElement, source: string, format: 'md' | 'html'): Promise<void> {
   if (format === 'html') {
-    host.innerHTML = DOMPurify.sanitize(source);
+    host.innerHTML = DOMPurify.sanitize(source, { FORCE_BODY: true });
     return;
   }
   await renderMarkdown(host, source);

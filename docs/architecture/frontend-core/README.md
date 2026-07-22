@@ -383,6 +383,32 @@ password field.
 
 ## Changes
 
+- 2026-07-22 (render + share fixes) — Three defects in `crypto`/`views`.
+  **(1) Sharing failed** with "Usages cannot be empty when creating a key."
+  `unwrapCekWithDekExtractable` unwrapped the transient extractable CEK with an
+  empty `[]` key-usages array; WebCrypto rejects any AES key created with zero
+  usages. Now unwrapped with `['encrypt','decrypt']` (usages are irrelevant to
+  the immediately-following `wrapKey`, but must be non-empty). Fixes both web
+  and desktop share flows, which share this one helper. **(2) `format: html`
+  notes rendered unstyled** — DOMPurify's default parses input as a body
+  fragment and drops `<style>` (whether in `<head>` or leading in `<body>`), so
+  a note's authored CSS never survived sanitize (the 2026-07-21 CSP loosening
+  was necessary but not sufficient; the claimed "no code change needed" was
+  wrong). `renderContent`'s html path now passes `{ FORCE_BODY: true }`, which
+  preserves `<style>` while still stripping `<script>`/`on*`. **(3) Mermaid
+  flowchart/class node text disappeared** — those labels render as
+  `<foreignObject><div>…</div></foreignObject>` (mermaid's default HTML labels,
+  on even in `securityLevel: 'strict'`), and DOMPurify's default sanitize strips
+  `<foreignObject>`, so boxes drew but text vanished (sequence diagrams use
+  native SVG `<text>` and were unaffected). `initialize` now sets
+  `htmlLabels: false`, emitting SVG `<text>` labels that survive the existing
+  sanitizer — chosen over widening DOMPurify to allow `<foreignObject>`, which
+  would enlarge the one sanctioned `innerHTML` sink's attack surface. Also set
+  `suppressErrorRendering: true`: on a genuine parse error (e.g. a `;` inside a
+  sequence message, which mermaid reads as a statement separator) mermaid used
+  to draw its "Syntax error in text …" bomb into a temp node on `document.body`
+  and leave it there when it threw; now it cleans up and the block degrades to
+  the existing `.mermaid-error` fallback (source shown in red).
 - 2026-07-21 (UI + unlock) — Four fixes. **(1)** The editor's public-link row is
   now a fixed-height slot (`.public-badge-slot`) whether or not the page is
   published, so paging through notes no longer jumps. **(2)** Tag-filter bar: the

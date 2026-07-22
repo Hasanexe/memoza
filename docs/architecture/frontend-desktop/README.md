@@ -269,7 +269,9 @@ feature that's native and platform-specific.
   `style-src` is relaxed — `script-src`/`img-src`/`connect-src` stay
   `'self'`-scoped, so no code-exec or external-exfiltration path opens. See the
   `frontend-web` README's matching entry for the full rationale and the
-  rejected nonce/hash/iframe alternatives.
+  rejected nonce/hash/iframe alternatives. **Note:** this CSP change alone did
+  not fix `format: html` notes — the `frontend-core` 2026-07-22 entry covers the
+  DOMPurify `FORCE_BODY` fix that the styled-HTML path also required.
 - 2026-07-21 (redesign) — **Passwordless-by-design; opt-in toggle removed.** The
   Settings → "Skip password on this device" section is gone, along with the
   `biometricControl` hook and `enableBiometricUnlock`/`disableBiometricUnlock`/
