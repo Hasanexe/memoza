@@ -40,9 +40,9 @@ export async function handleChangePassword(request: Request, env: AuthEnv): Prom
     return json({ error: 'Invalid key envelope' }, 400);
   }
 
-  const user = await env.DB.prepare('SELECT id, password_hash, active FROM users WHERE email = ?')
+  const user = await env.DB.prepare('SELECT id, password_hash, active, username FROM users WHERE email = ?')
     .bind(email.toLowerCase())
-    .first<{ id: string; password_hash: string; active: number }>();
+    .first<{ id: string; password_hash: string; active: number; username: string | null }>();
 
   if (!user) return json({ error: INVALID }, 401);
   const ok = await verify(old_password, user.password_hash);
@@ -68,7 +68,7 @@ export async function handleChangePassword(request: Request, env: AuthEnv): Prom
     env.DB.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').bind(user.id),
   ]);
 
-  const { accessToken, refreshCookie } = await issueTokens(env, { id: user.id });
+  const { accessToken, refreshCookie } = await issueTokens(env, { id: user.id, username: user.username ?? '' });
 
   return new Response(JSON.stringify({ access_token: accessToken, token_type: 'Bearer' }), {
     status: 200,

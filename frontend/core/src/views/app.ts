@@ -13,14 +13,11 @@ import {
 import { renderList } from './listView';
 import { renderEditor } from './editorView';
 import { renderSettings } from './settingsView';
-import { renderPublicReader } from './publicReaderView';
 import { clear, h, icon } from './dom';
 import { renderSidebar, type SidebarSection, type SidebarChrome } from './sidebar';
 import { createNotePanel, type NotePanel, type NotePanelSection } from './notePanel';
 import { createSyncStatus } from './syncStatus';
 import { EMAIL_STORAGE_KEY } from '../config';
-
-const PAGE_ROUTE_RE = /^[1-9][0-9]*$/;
 
 export interface UnlockProvider {
   isAvailable(): Promise<boolean>;
@@ -203,13 +200,6 @@ export function mountApp(root: HTMLElement, store: Store, options: MountOptions 
 
   function render(): void {
     const { segments, params } = currentRoute();
-
-    if (segments.length === 2 && PAGE_ROUTE_RE.test(segments[1])) {
-      teardownShell();
-      clear(root);
-      void renderPublicReader(root, segments[0], Number(segments[1]));
-      return;
-    }
 
     if (!isUnlocked()) {
       wasUnlocked = false;

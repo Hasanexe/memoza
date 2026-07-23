@@ -351,12 +351,11 @@ function renderEditorForm(
   window.addEventListener('pagehide', onPageHide);
 
   let showingPreview = false;
-  const previewToggle = h(
-    'button',
-    { type: 'button', class: 'icon-btn', 'aria-label': t('editor.preview'), title: t('editor.preview') },
-    icon('eye')
-  );
-  previewToggle.addEventListener('click', async () => {
+  const previewToggle = readOnly
+    ? null
+    : h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('editor.preview'), title: t('editor.preview') }, icon('eye'));
+  previewToggle?.addEventListener('click', async () => {
+    if (!previewToggle) return;
     showingPreview = !showingPreview;
     if (showingPreview) {
       bodyArea.classList.add('hidden');
@@ -502,12 +501,13 @@ function renderEditorForm(
   );
 
   function renderComment(c: DecryptedComment): HTMLElement {
-    const canDelete = c.authorId === session.userId || note?.ownerId === session.userId;
+    const canDelete = (c.authorUsername !== null && c.authorUsername === session.username) || note?.ownerId === session.userId;
+    const author = c.authorUsername ? `@${c.authorUsername}` : t('editor.unknownAuthor');
     const el = h(
       'div',
       { class: 'comment' },
       h('p', {}, c.body),
-      h('span', { class: 'comment-meta' }, new Date(c.createdAt).toLocaleString())
+      h('span', { class: 'comment-meta' }, `${author} · ${new Date(c.createdAt).toLocaleString()}`)
     );
     if (canDelete) {
       const del = h('button', { type: 'button', class: 'danger' }, t('common.delete'));
@@ -572,7 +572,13 @@ function renderEditorForm(
     { class: 'editor-view' },
     toolbarRow,
     publicBadgeHost,
-    readOnly ? h('p', { class: 'readonly-notice' }, t('editor.readOnlyNotice')) : null,
+    readOnly
+      ? h(
+          'p',
+          { class: 'readonly-notice' },
+          note?.ownerUsername ? t('editor.sharedByUsername', { username: note.ownerUsername }) : t('editor.readOnlyNotice')
+        )
+      : null,
     titleInput,
     tagsEditor.el,
     markdownToolbar,
@@ -585,6 +591,12 @@ function renderEditorForm(
   clear(main);
   main.append(content);
   applyColorAccent();
+
+  if (readOnly) {
+    bodyArea.classList.add('hidden');
+    previewHost.classList.remove('hidden');
+    void renderContent(previewHost, bodyArea.value, getFormat(tagsEditor.getTags()));
+  }
 
   if (pageNavScroll !== null) {
     const y = pageNavScroll;

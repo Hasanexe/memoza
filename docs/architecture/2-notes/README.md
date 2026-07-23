@@ -30,8 +30,9 @@ anonymous readers. No R2, no cron — Markdown text only in v1.
   There is no per-grant permission — the owner (`note.owner_id`) is the sole
   writer of content; every other grant is read-only.
 - A **comment** (`note_comment`) is one participant's feedback on a note:
-  `author_id`, `body_ct` (encrypted with the note's CEK), timestamps. Any
-  participant may post; the author or the note owner may delete.
+  `author_username` (set from the trusted `X-Username` header), `body_ct`
+  (encrypted with the note's CEK), timestamps. Any participant may post; the
+  author (matched by username) or the note owner may delete.
 
 ## Endpoint map
 
@@ -41,14 +42,14 @@ All responses JSON, errors `{ "error": "…" }`. Every query scoped by
 | Endpoint | Purpose |
 |---|---|
 | `GET /notes?since={cursor}&limit={n}` | The one list/sync endpoint (full sync = omit `since`). Keyset-paginated feed of the caller's grants joined to notes: `note_id, title_ct, tags_ct, owner_id, has_unread_comment, rev, timestamps`, plus tombstones and revoked grants — never bodies or comments. Returns a `next` cursor; page until it's null |
-| `GET /notes/{id}` | Full note incl. `body_ct` and the caller's `wrapped_cek` (404 if no grant). Also marks the note viewed: sets the caller's grant `last_viewed_at = now`, clearing `has_unread_comment` |
+| `GET /notes/{id}` | Full note incl. `body_ct` and the caller's `wrapped_cek` (404 if no grant), plus `owner_username` (for the "shared by" label). For the owner, also returns `shares` (active recipients as `{user_id, username}`) for the share dialog, and backfills the owner's own grant `username` from `X-Username`. Also marks the note viewed: sets the caller's grant `last_viewed_at = now`, clearing `has_unread_comment` |
 | `PUT /notes/{id}` | **Idempotent create-or-update** with a client-generated `id`. Create: `{title_ct, body_ct, tags_ct, wrapped_cek}`. Update (owner only): add `base_rev` → `409` on mismatch. If the note is published (`is_public=1`), the update must also carry plaintext `{title, body, format}` (live mirror — see Public pages): `400` without them, and `400` if they're sent for an unpublished note. Re-sending an identical create is a no-op |
 | `DELETE /notes/{id}` | Owner: move note to trash. Non-owner: no-op/403 (they can't trash others' notes) |
 | `POST /notes/{id}/restore` | Owner: un-trash |
 | `DELETE /notes/{id}/purge` | Owner: permanent delete → tombstone |
-| `POST /notes/{id}/share` | Owner: `{recipient_id, wrapped_cek}` → insert a read-only share grant |
+| `POST /notes/{id}/share` | Owner: `{recipient_id, wrapped_cek, username}` → insert a read-only share grant (recipient's username denormalized onto the grant) |
 | `DELETE /notes/{id}/share/{user_id}` | Owner: revoke a share grant |
-| `GET /notes/{id}/comments` | Any participant: list a note's comments (`id, author_id, body_ct, timestamps`) |
+| `GET /notes/{id}/comments` | Any participant: list a note's comments (`id, author_username, body_ct, timestamps`) |
 | `POST /notes/{id}/comments` | Any participant: `{id, body_ct}` (client-generated `id`) → insert; bumps the note's grants |
 | `DELETE /notes/{id}/comments/{comment_id}` | Comment author or note owner: delete a comment |
 | `POST /notes/{id}/publish` | Owner: `{title, body, format}` **plaintext** → sets `is_public=1`, writes/mirrors the `public_page` row. `400` if the note has no `page_no` yet (pre-backfill legacy note — `public_page` is keyed by it). No unpublish; every subsequent owner `PUT` update carries the plaintext mirror fields (live mirror) |
@@ -146,8 +147,9 @@ bolted onto it:
   `GET api.memoza.io/public/{username}/{page_no}` (no JWT — like `/health`,
   answered before auth), resolves `username → owner_id` through `memoza-auth`
   first, then calls this endpoint with the resolved id (see the auth service
-  design). The frontend's public reader at `app.memoza.io/{username}/{page_no}`
-  is a client-side route that calls the gateway endpoint. This keeps the
+  design). The public site at `memozasites.com/{username}/{page_no}`
+  (`memoza-sites`, `docs/architecture/4-public-sites/README.md`) consumes the
+  gateway endpoint over a service binding. This keeps the
   identity-free read path physically separate from every `X-User-Id`-scoped
   endpoint above. Two hard requirements on the gateway side (it composes
   internal URLs from anonymous, attacker-controlled path parts): it must
@@ -321,6 +323,13 @@ bolted onto it:
 
 ## Changes
 
+- 2026-07-23 — Identity on comments/shares moved to **username** (migration
+  `0003`): `note_comment.author_id` → `author_username` (set from the trusted
+  `X-Username` header; also the delete-auth key), and `note_grant` gained a
+  denormalized `username` (from the share request). `POST /share` now takes a
+  `username`; `GET /notes/{id}` returns the owner's active recipient `shares`
+  (no auth-service lookup). Enables username-based sharing and username-labelled
+  comments/recipient lists in the frontend.
 - 2026-07-07 — Initial single-user design.
 - 2026-07-08 — Reworked to per-note CEK + grants for sharing; added share/
   unshare, read-write permissions, per-user folders/tags, and the internal

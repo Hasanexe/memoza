@@ -15,12 +15,13 @@ const MIGRATIONS = [
     rev INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    deleted_at INTEGER
+    deleted_at INTEGER,
+    owner_username TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS local_comment (
     id TEXT PRIMARY KEY,
     note_id TEXT NOT NULL,
-    author_id TEXT NOT NULL,
+    author_username TEXT,
     body_ct TEXT NOT NULL,
     created_at INTEGER NOT NULL
   )`,
@@ -56,6 +57,9 @@ const ALTER_STATEMENTS = [
   'ALTER TABLE write_queue ADD COLUMN failed INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE local_account ADD COLUMN locked INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE local_account DROP COLUMN biometric_enabled',
+  'ALTER TABLE local_comment ADD COLUMN author_username TEXT',
+  'ALTER TABLE local_comment DROP COLUMN author_id',
+  'ALTER TABLE local_note ADD COLUMN owner_username TEXT',
 ];
 
 let dbPromise: Promise<Database> | null = null;

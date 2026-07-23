@@ -1,4 +1,4 @@
-import { json, readUserId } from './types';
+import { json, readUserId, readUsername } from './types';
 import type { NotesEnv } from './types';
 import { handleList } from './handlers/list';
 import { handleGetNote } from './handlers/get-note';
@@ -26,6 +26,7 @@ export default {
 
     const userId = readUserId(request);
     if (!userId) return json({ error: 'Unauthorized' }, 401);
+    const username = readUsername(request);
 
     if (method === 'GET' && pathname === '/notes') {
       return handleList(env, userId, searchParams);
@@ -58,7 +59,7 @@ export default {
 
     const commentMatch = pathname.match(/^\/notes\/([^/]+)\/comments\/([^/]+)$/);
     if (method === 'DELETE' && commentMatch) {
-      return handleDeleteComment(env, userId, commentMatch[1], commentMatch[2]);
+      return handleDeleteComment(env, userId, username, commentMatch[1], commentMatch[2]);
     }
 
     const commentsMatch = pathname.match(/^\/notes\/([^/]+)\/comments$/);
@@ -66,12 +67,12 @@ export default {
       return handleListComments(env, userId, commentsMatch[1]);
     }
     if (method === 'POST' && commentsMatch) {
-      return handlePostComment(request, env, userId, commentsMatch[1]);
+      return handlePostComment(request, env, userId, username, commentsMatch[1]);
     }
 
     const notesMatch = pathname.match(/^\/notes\/([^/]+)$/);
     if (method === 'GET' && notesMatch) {
-      return handleGetNote(env, userId, notesMatch[1]);
+      return handleGetNote(env, userId, username, notesMatch[1]);
     }
     if (method === 'PUT' && notesMatch) {
       return handlePutNote(request, env, userId, notesMatch[1]);

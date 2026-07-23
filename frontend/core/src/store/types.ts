@@ -15,13 +15,19 @@ export interface DecryptedNoteSummary {
 
 export interface DecryptedNote extends DecryptedNoteSummary {
   body: string;
+  ownerUsername?: string | null;
 }
 
 export interface DecryptedComment {
   id: string;
-  authorId: string;
+  authorUsername: string | null;
   body: string;
   createdAt: number;
+}
+
+export interface NoteShare {
+  userId: string;
+  username: string | null;
 }
 
 export interface Store {
@@ -32,8 +38,9 @@ export interface Store {
   trashNote(id: string): Promise<void>;
   restoreNote(id: string): Promise<void>;
   purgeNote(id: string): Promise<void>;
-  shareNote(id: string, recipientEmail: string): Promise<void>;
+  shareNote(id: string, recipientUsername: string): Promise<void>;
   unshareNote(id: string, userId: string): Promise<void>;
+  listShares(id: string): Promise<NoteShare[]>;
   publish(id: string): Promise<number>;
   listComments(noteId: string): Promise<DecryptedComment[]>;
   postComment(noteId: string, body: string): Promise<DecryptedComment>;

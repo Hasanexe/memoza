@@ -1,6 +1,14 @@
 import type { StringKey } from '../en';
 
 const zh: Record<StringKey, string> = {
+  'editor.sharedByUsername': 'Shared by @{username} — read only. You can still comment.',
+  'editor.unknownAuthor': 'Unknown',
+  'share.recipientUsername': 'Recipient username',
+  'share.sharedWithUsername': 'Shared with @{username}',
+  'share.peopleWithAccess': 'People with access',
+  'share.noRecipients': 'Not shared with anyone yet.',
+  'share.remove': 'Remove',
+  'share.failedToLoadShares': 'Failed to load recipients',
   'common.cancel': '取消',
   'common.close': '关闭',
   'common.loading': '加载中…',

@@ -18,14 +18,15 @@ interface NoteGrantRow {
   wrapped_cek: string;
   wrap_method: string;
   revoked_at: number | null;
+  username: string | null;
 }
 
-export async function handleGetNote(env: NotesEnv, userId: string, noteId: string): Promise<Response> {
+export async function handleGetNote(env: NotesEnv, userId: string, username: string, noteId: string): Promise<Response> {
   if (!validateUUID(noteId)) return json({ error: 'Invalid note id' }, 400);
 
   const row = await env.DB.prepare(
     `SELECT n.id, n.owner_id, n.title_ct, n.body_ct, n.tags_ct, n.rev, n.created_at, n.updated_at,
-            n.deleted_at, n.purged_at, n.page_no, n.is_public, g.wrapped_cek, g.wrap_method, g.revoked_at
+            n.deleted_at, n.purged_at, n.page_no, n.is_public, g.wrapped_cek, g.wrap_method, g.revoked_at, g.username
      FROM note_grant g JOIN note n ON n.id = g.note_id
      WHERE g.note_id = ? AND g.user_id = ?`
   )
@@ -40,6 +41,29 @@ export async function handleGetNote(env: NotesEnv, userId: string, noteId: strin
     .bind(Date.now(), noteId, userId)
     .run();
 
+  const isOwner = row.owner_id === userId;
+  let ownerUsername: string | null = null;
+  let shares: { user_id: string; username: string | null }[] = [];
+  if (isOwner) {
+    ownerUsername = username;
+    if (row.username !== username) {
+      await env.DB.prepare('UPDATE note_grant SET username = ? WHERE note_id = ? AND user_id = ?')
+        .bind(username, noteId, userId)
+        .run();
+    }
+    const grants = await env.DB.prepare(
+      'SELECT user_id, username FROM note_grant WHERE note_id = ? AND revoked_at IS NULL AND user_id != ? ORDER BY updated_at ASC'
+    )
+      .bind(noteId, userId)
+      .all<{ user_id: string; username: string | null }>();
+    shares = grants.results;
+  } else {
+    const owner = await env.DB.prepare('SELECT username FROM note_grant WHERE note_id = ? AND user_id = ?')
+      .bind(noteId, row.owner_id)
+      .first<{ username: string | null }>();
+    ownerUsername = owner?.username ?? null;
+  }
+
   return json(
     {
       id: row.id,
@@ -53,8 +77,10 @@ export async function handleGetNote(env: NotesEnv, userId: string, noteId: strin
       created_at: row.created_at,
       updated_at: row.updated_at,
       deleted_at: row.deleted_at,
-      page_no: row.owner_id === userId ? row.page_no : null,
+      page_no: isOwner ? row.page_no : null,
       is_public: row.is_public === 1,
+      owner_username: ownerUsername,
+      shares,
     },
     200
   );

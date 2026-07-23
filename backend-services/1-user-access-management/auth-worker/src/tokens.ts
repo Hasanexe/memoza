@@ -56,10 +56,11 @@ export async function issueTokens(
     REFRESH_TOKEN_MAX_AGE_S: string;
     MAX_REFRESH_TOKENS_PER_USER: string;
   },
-  user: { id: string }
+  user: { id: string; username: string }
 ): Promise<{ accessToken: string; refreshCookie: string }> {
   const accessToken = await signAccessToken(env.JWT_PRIVATE_KEY, {
     user_id: user.id,
+    username: user.username,
   });
 
   const rawBytes = crypto.getRandomValues(new Uint8Array(32));

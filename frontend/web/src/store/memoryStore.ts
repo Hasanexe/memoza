@@ -7,7 +7,7 @@ import { requireSession } from '@memoza/core/crypto/session';
 import { search as searchIndex } from '@memoza/core/search';
 import { getFormat } from '@memoza/core/views/controlTags';
 import { markSyncing, markSynced } from '@memoza/core/connection';
-import type { Store, DecryptedNoteSummary, DecryptedNote, DecryptedComment } from '@memoza/core/store/types';
+import type { Store, DecryptedNoteSummary, DecryptedNote, DecryptedComment, NoteShare } from '@memoza/core/store/types';
 import type { NoteRow, FullNote } from '@memoza/core/api/notes';
 
 interface NoteState {
@@ -16,6 +16,7 @@ interface NoteState {
   title: string;
   tags: string[];
   body: string | null;
+  ownerUsername?: string | null;
 }
 
 const SYNC_TTL_MS = 30_000;
@@ -80,7 +81,7 @@ export function createMemoryStore(): Store {
 
   async function getNote(id: string): Promise<DecryptedNote | null> {
     const cached = notes.get(id);
-    if (cached && cached.body !== null) return { ...toSummary(cached), body: cached.body };
+    if (cached && cached.body !== null) return { ...toSummary(cached), body: cached.body, ownerUsername: cached.ownerUsername };
 
     let full: FullNote;
     try {
@@ -94,8 +95,9 @@ export function createMemoryStore(): Store {
     }
     const state = await unwrapAndDecrypt(full);
     state.body = await noteCrypto.openBody(state.cek, full.id, full.body_ct);
+    state.ownerUsername = full.owner_username ?? null;
     notes.set(id, state);
-    return { ...toSummary(state), body: state.body };
+    return { ...toSummary(state), body: state.body, ownerUsername: state.ownerUsername };
   }
 
   async function createNewNote(title: string, tags: string[], body: string): Promise<DecryptedNote> {
@@ -195,21 +197,26 @@ export function createMemoryStore(): Store {
     notes.delete(id);
   }
 
-  async function shareNote(id: string, recipientEmail: string): Promise<void> {
+  async function shareNote(id: string, recipientUsername: string): Promise<void> {
     const session = requireSession();
     const state = notes.get(id);
     if (!state) throw new Error('Note not loaded locally');
     if (state.row.wrap_method !== 'dek') throw new Error('Only the owner can share this note');
 
-    const recipient = await authApi.lookupPublicKey(recipientEmail);
+    const recipient = await authApi.lookupPublicKey(recipientUsername);
     const publicKey = await importRecipientPublicKey(recipient.public_key);
     const extractableCek = await noteCrypto.unwrapCekWithDekExtractable(session.dek, state.row.wrapped_cek);
     const wrappedCek = await noteCrypto.wrapCekWithPublicKey(publicKey, extractableCek);
-    await notesApi.shareNote(id, recipient.user_id, wrappedCek);
+    await notesApi.shareNote(id, recipient.user_id, wrappedCek, recipient.username);
   }
 
   async function unshareNote(id: string, userId: string): Promise<void> {
     await notesApi.unshareNote(id, userId);
+  }
+
+  async function listShares(id: string): Promise<NoteShare[]> {
+    const full = await notesApi.getNote(id);
+    return (full.shares ?? []).map(s => ({ userId: s.user_id, username: s.username }));
   }
 
   async function publish(id: string): Promise<number> {
@@ -238,7 +245,7 @@ export function createMemoryStore(): Store {
     return Promise.all(
       res.comments.map(async c => ({
         id: c.id,
-        authorId: c.author_id,
+        authorUsername: c.author_username,
         body: await noteCrypto.openComment(state.cek, c.id, c.body_ct),
         createdAt: c.created_at,
       }))
@@ -251,7 +258,7 @@ export function createMemoryStore(): Store {
     const id = crypto.randomUUID();
     const bodyCt = await noteCrypto.sealComment(state.cek, id, body);
     const res = await notesApi.postComment(noteId, id, bodyCt);
-    return { id: res.id, authorId: res.author_id, body, createdAt: res.created_at };
+    return { id: res.id, authorUsername: res.author_username, body, createdAt: res.created_at };
   }
 
   async function deleteComment(noteId: string, commentId: string): Promise<void> {
@@ -275,6 +282,7 @@ export function createMemoryStore(): Store {
     purgeNote,
     shareNote,
     unshareNote,
+    listShares,
     publish,
     listComments,
     postComment,

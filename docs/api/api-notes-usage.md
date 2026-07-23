@@ -67,6 +67,12 @@ DEK if `wrap_method="dek"`, else your private key), then AES-GCM-decrypt
 `title_ct`/`body_ct` (AAD = note id). `404` if you have no grant. As a side
 effect this marks the note viewed (clears `has_unread_comment` for you).
 
+The response also carries `"owner_username"` — the note owner's username, so a
+recipient can show "shared by @…". For a note **you own** it additionally
+carries `"shares": [ { "user_id", "username" } ]` — the current active recipients
+(revoked grants excluded), used to render the share dialog's recipient list
+(empty for non-owners).
+
 ## `PUT /notes/{id}` — create or update (idempotent, owner only)
 
 Generate the `id` and a CEK, encrypt title/body/tags, wrap the CEK with your DEK.
@@ -111,13 +117,16 @@ you are not the owner.
 Any participant (owner or share recipient) can read and post comments; the body
 is encrypted with the note's CEK (AAD = the comment `id`).
 
-- `GET /notes/{id}/comments` → `{ "comments": [ { "id", "author_id", "body_ct",
-  "created_at" } ] }`, oldest first. `404` if you have no grant.
+- `GET /notes/{id}/comments` → `{ "comments": [ { "id", "author_username",
+  "body_ct", "created_at" } ] }`, oldest first. `author_username` is the
+  commenter's public username (server-set from the token — display it as-is;
+  may be `null` on legacy comments). `404` if you have no grant.
 - `POST /notes/{id}/comments` — generate the comment `id` (UUID), encrypt the
-  body with the note's CEK: `{ "id": "…", "body_ct": "…" }` → `201`. Idempotent
-  on replay. Posting bumps the note so it resurfaces in every participant's sync.
+  body with the note's CEK: `{ "id": "…", "body_ct": "…" }` → `201` with
+  `{ "id", "author_username", "body_ct", "created_at" }`. Idempotent on replay.
+  Posting bumps the note so it resurfaces in every participant's sync.
 - `DELETE /notes/{id}/comments/{comment_id}` → `200`. Allowed for the comment
-  author or the note owner; else `403`.
+  author (matched by username) or the note owner; else `403`.
 
 ## Trash lifecycle (owner only)
 
@@ -128,18 +137,21 @@ is encrypted with the note's CEK (AAD = the comment `id`).
 
 ## Sharing (owner only)
 
-First fetch the recipient's key (`GET /users/public-key`, see
-`api-auth-usage.md`), wrap this note's CEK to it, then:
+Look the recipient up by **username** (`GET /users/public-key?username=…`, see
+`api-auth-usage.md`) — it returns their `user_id`, canonical `username`, and
+`public_key`. Wrap this note's CEK to their key, then:
 
 `POST /notes/{id}/share`
 
 ```json
-{ "recipient_id": "…", "wrapped_cek": "<RSA-OAEP wrapped>" }
+{ "recipient_id": "…", "wrapped_cek": "<RSA-OAEP wrapped>", "username": "…" }
 ```
 
-`200`/`201` — shares are read-only. `DELETE /notes/{id}/share/{user_id}` →
-`200`, revokes the grant (the note appears in that user's `revoked` list on next
-sync). Re-sending `share` for an existing recipient re-wraps their CEK.
+Send the canonical `username` from the lookup; the server stores it on the grant
+so the owner's recipient list can show it without another lookup. `200`/`201` —
+shares are read-only. `DELETE /notes/{id}/share/{user_id}` → `200`, revokes the
+grant (the note appears in that user's `revoked` list on next sync). Re-sending
+`share` for an existing recipient re-wraps their CEK.
 
 ## Pages & public sharing
 
@@ -158,7 +170,7 @@ pages"). **Owner only.**
 `200`/`201` → `{ "page_no": 26 }` (all you need to build the link). `400` if
 the note has no `page_no` yet (legacy note predating pages, not yet
 backfilled). The public URL is
-`https://app.memoza.io/<your username>/<page_no>`. **There is no unpublish
+`https://memozasites.com/<your username>/<page_no>`. **There is no unpublish
 endpoint** — the public copy stays live; after publishing, every `PUT` update
 must carry the plaintext mirror fields (see `PUT /notes/{id}` above), which is
 how the public copy stays current — no need to call `publish` again. Only the
@@ -172,8 +184,10 @@ restore UI warns for published notes) or `DELETE /notes/{id}/purge`
 the note/grant API above: `GET https://api.memoza.io/public/<username>/<page_no>`
 → `200` → `{ "title": "…", "body": "…", "format": "md" }` (exactly these three
 fields, nothing else), or `404` if unpublished/deleted/no such username. No
-token, no encryption, no `cek` involved — the frontend's public reader page
-(`app.memoza.io/<username>/<page_no>`) just calls this and renders the result.
+token, no encryption, no `cek` involved — the public site
+(`memozasites.com/<username>/<page_no>`) consumes this composition and serves
+the result as a standalone page; app clients never need to call it (they
+already hold any note they can display).
 See `api-auth-usage.md` for how usernames resolve.
 
 ## Status codes

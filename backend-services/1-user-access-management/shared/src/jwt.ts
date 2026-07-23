@@ -28,10 +28,10 @@ export async function importPublicKey(pem: string): Promise<KeyLike> {
 
 export async function signAccessToken(
   privateKeyPem: string,
-  claims: { user_id: string }
+  claims: { user_id: string; username: string }
 ): Promise<string> {
   const key = await importPrivateKey(privateKeyPem);
-  return new SignJWT({ user_id: claims.user_id })
+  return new SignJWT({ user_id: claims.user_id, username: claims.username })
     .setProtectedHeader({ alg: 'EdDSA' })
     .setIssuedAt()
     .setIssuer(ISS)
@@ -54,6 +54,7 @@ export async function verifyToken(
       const { payload } = await jwtVerify(token, key, { issuer: ISS, audience: AUD });
       return {
         user_id: payload['user_id'] as string,
+        username: payload['username'] as string,
         exp: payload.exp as number,
       };
     } catch (err) {

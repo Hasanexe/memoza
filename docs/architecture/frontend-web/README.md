@@ -164,6 +164,15 @@ in-memory `store` impl and the app entry, and the Tauri shell later reuses
 
 ## Changes
 
+- 2026-07-22 (Memoza Sites cutover) — Public pages moved to
+  `memozasites.com/<username>/<page_no>` (served by the `memoza-sites` worker
+  — `docs/architecture/4-public-sites/README.md`); the in-app public reader
+  and `main.ts`'s plain-path → hash rewrite were removed (pre-production, no
+  redirect kept; `wrangler.jsonc`'s `not_found_handling` stays as harmless SPA
+  fallback). `public/_headers` CSP gained `frame-src https://memozasites.com`
+  so the sandboxed `format:html` runner iframe can load.
+  `VITE_PUBLIC_APP_ORIGIN` was replaced by `VITE_PUBLIC_SITE_ORIGIN`
+  (defaults `https://memozasites.com`).
 - 2026-07-19 (navigation redesign) — Adopted `frontend-core`'s sidebar
   drill-in + main-pane browse mode and its new shared `performLogout()`
   (no web-specific code needed — see `frontend-core`'s Changes). This

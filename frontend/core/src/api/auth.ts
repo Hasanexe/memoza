@@ -106,9 +106,10 @@ export function deleteAccount(email: string, password: string): Promise<{ ok: tr
 
 export interface PublicKeyResponse {
   user_id: string;
+  username: string;
   public_key: string;
 }
 
-export function lookupPublicKey(email: string): Promise<PublicKeyResponse> {
-  return request(`/users/public-key?email=${encodeURIComponent(email)}`, { method: 'GET' });
+export function lookupPublicKey(username: string): Promise<PublicKeyResponse> {
+  return request(`/users/public-key?username=${encodeURIComponent(username)}`, { method: 'GET' });
 }

@@ -1,7 +1,9 @@
 import '@memoza/core/views/styles.css';
 import { mountApp } from '@memoza/core/views/app';
+import { configureSandboxRunner } from '@memoza/core/views/sandboxFrame';
 import { isUnlocked, requireSession } from '@memoza/core/crypto/session';
 import { initLanguage } from '@memoza/core/i18n/index';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
 import { createSqliteStore } from './store/sqliteStore';
 import { drainQueue } from './store/queue';
@@ -24,6 +26,8 @@ if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
 
 const root = document.getElementById('app');
 if (!root) throw new Error('Missing #app root element');
+
+configureSandboxRunner(convertFileSrc('_runner', 'sandbox'));
 
 await initLanguage();
 

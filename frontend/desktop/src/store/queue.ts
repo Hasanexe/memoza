@@ -19,7 +19,7 @@ export type QueueOp =
   | { kind: 'trash'; noteId: string }
   | { kind: 'restore'; noteId: string }
   | { kind: 'purge'; noteId: string }
-  | { kind: 'share'; noteId: string; recipientId: string; wrappedCek: string }
+  | { kind: 'share'; noteId: string; recipientId: string; wrappedCek: string; username: string }
   | { kind: 'unshare'; noteId: string; userId: string }
   | { kind: 'comment'; noteId: string; commentId: string; body_ct: string }
   | { kind: 'deleteComment'; noteId: string; commentId: string };
@@ -253,7 +253,7 @@ async function applyOp(op: QueueOp): Promise<void> {
       await notesApi.purgeNote(op.noteId);
       return;
     case 'share':
-      await notesApi.shareNote(op.noteId, op.recipientId, op.wrappedCek);
+      await notesApi.shareNote(op.noteId, op.recipientId, op.wrappedCek, op.username);
       return;
     case 'unshare':
       await notesApi.unshareNote(op.noteId, op.userId);

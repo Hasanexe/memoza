@@ -4,7 +4,8 @@
   "workspaces": [
     "core",
     "web",
-    "desktop"
+    "desktop",
+    "public-reader"
   ],
   "devDependencies": {
     "typescript": "^5.7.2"

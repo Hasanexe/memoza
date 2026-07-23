@@ -1,0 +1,20 @@
+{
+  "name": "public-reader",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@memoza/core": "*",
+    "marked": "^18.0.6",
+    "dompurify": "^3.4.11",
+    "mermaid": "^11.16.0"
+  },
+  "devDependencies": {
+    "vite": "^8.1.4",
+    "typescript": "^5.7.2"
+  }
+}

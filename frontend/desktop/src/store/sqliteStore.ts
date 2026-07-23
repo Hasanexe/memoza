@@ -3,7 +3,7 @@ import * as noteCrypto from '@memoza/core/crypto/note';
 import { requireSession } from '@memoza/core/crypto/session';
 import { search as searchIndex } from '@memoza/core/search';
 import { ApiError } from '@memoza/core/api/client';
-import type { Store, DecryptedNoteSummary, DecryptedNote, DecryptedComment } from '@memoza/core/store/types';
+import type { Store, DecryptedNoteSummary, DecryptedNote, DecryptedComment, NoteShare } from '@memoza/core/store/types';
 import type { FullNote } from '@memoza/core/api/notes';
 import { importRecipientPublicKey } from '@memoza/core/crypto/keys';
 import * as authApi from '@memoza/core/api/auth';
@@ -27,12 +27,13 @@ interface LocalNoteRow {
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
+  owner_username: string | null;
 }
 
 interface LocalCommentRow {
   id: string;
   note_id: string;
-  author_id: string;
+  author_username: string | null;
   body_ct: string;
   created_at: number;
 }
@@ -72,13 +73,14 @@ export function createSqliteStore(): Store {
   async function upsertLocalNote(row: LocalNoteRow): Promise<void> {
     const db = await getDb();
     await db.execute(
-      `INSERT INTO local_note (id, owner_id, title_ct, body_ct, tags_ct, wrapped_cek, wrap_method, has_unread_comment, page_no, is_public, rev, created_at, updated_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO local_note (id, owner_id, title_ct, body_ct, tags_ct, wrapped_cek, wrap_method, has_unread_comment, page_no, is_public, rev, created_at, updated_at, deleted_at, owner_username)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
          owner_id = excluded.owner_id, title_ct = excluded.title_ct, body_ct = excluded.body_ct, tags_ct = excluded.tags_ct,
          wrapped_cek = excluded.wrapped_cek, wrap_method = excluded.wrap_method, has_unread_comment = excluded.has_unread_comment,
          page_no = excluded.page_no, is_public = excluded.is_public, rev = excluded.rev,
-         created_at = excluded.created_at, updated_at = excluded.updated_at, deleted_at = excluded.deleted_at`,
+         created_at = excluded.created_at, updated_at = excluded.updated_at, deleted_at = excluded.deleted_at,
+         owner_username = excluded.owner_username`,
       [
         row.id,
         row.owner_id,
@@ -94,6 +96,7 @@ export function createSqliteStore(): Store {
         row.created_at,
         row.updated_at,
         row.deleted_at,
+        row.owner_username,
       ]
     );
     cache.set(row.id, await decryptRow(row));
@@ -146,6 +149,7 @@ export function createSqliteStore(): Store {
             has_unread_comment: row.has_unread_comment ? 1 : 0,
             is_public: full.is_public ? 1 : 0,
             updated_at: row.updated_at,
+            owner_username: full.owner_username ?? null,
           });
         }
 
@@ -188,25 +192,28 @@ export function createSqliteStore(): Store {
 
   async function getNote(id: string): Promise<DecryptedNote | null> {
     let row = await getLocalRow(id);
-    if (!row) {
+    if (!row || row.has_unread_comment === 1) {
       try {
         const full = await notesApi.getNote(id);
         await upsertLocalNote({
           ...full,
           has_unread_comment: full.has_unread_comment ? 1 : 0,
           is_public: full.is_public ? 1 : 0,
+          owner_username: full.owner_username ?? null,
         });
         row = await getLocalRow(id);
       } catch (err) {
-        if (err instanceof ApiError && err.status === 404) return null;
-        throw err;
+        if (!row) {
+          if (err instanceof ApiError && err.status === 404) return null;
+          throw err;
+        }
       }
     }
     if (!row) return null;
     const entry = cache.get(id) ?? (await decryptRow(row));
     cache.set(id, entry);
     const body = await noteCrypto.openBody(entry.cek, id, row.body_ct);
-    return { ...toSummary(id, row, entry), body };
+    return { ...toSummary(id, row, entry), body, ownerUsername: row.owner_username };
   }
 
   async function createNewNote(title: string, tags: string[], body: string): Promise<DecryptedNote> {
@@ -234,6 +241,7 @@ export function createSqliteStore(): Store {
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      owner_username: null,
     };
     await upsertLocalNote(row);
     await enqueue({ kind: 'create', noteId: newId, title_ct: titleCt, body_ct: bodyCt, tags_ct: tagsCt, wrapped_cek: wrappedCek });
@@ -286,21 +294,26 @@ export function createSqliteStore(): Store {
     await enqueue({ kind: 'purge', noteId: id });
   }
 
-  async function shareNote(id: string, recipientEmail: string): Promise<void> {
+  async function shareNote(id: string, recipientUsername: string): Promise<void> {
     const session = requireSession();
     const row = await getLocalRow(id);
     if (!row) throw new Error('Note not loaded locally');
     if (row.wrap_method !== 'dek') throw new Error('Only the owner can share this note');
 
-    const recipient = await authApi.lookupPublicKey(recipientEmail);
+    const recipient = await authApi.lookupPublicKey(recipientUsername);
     const publicKey = await importRecipientPublicKey(recipient.public_key);
     const extractableCek = await noteCrypto.unwrapCekWithDekExtractable(session.dek, row.wrapped_cek);
     const wrappedCek = await noteCrypto.wrapCekWithPublicKey(publicKey, extractableCek);
-    await enqueue({ kind: 'share', noteId: id, recipientId: recipient.user_id, wrappedCek });
+    await enqueue({ kind: 'share', noteId: id, recipientId: recipient.user_id, wrappedCek, username: recipient.username });
   }
 
   async function unshareNote(id: string, userId: string): Promise<void> {
     await enqueue({ kind: 'unshare', noteId: id, userId });
+  }
+
+  async function listShares(id: string): Promise<NoteShare[]> {
+    const full = await notesApi.getNote(id);
+    return (full.shares ?? []).map(s => ({ userId: s.user_id, username: s.username }));
   }
 
   async function publish(id: string): Promise<number> {
@@ -325,16 +338,22 @@ export function createSqliteStore(): Store {
     if (!row || !entry) throw new Error('Note not loaded locally');
     const db = await getDb();
 
-    try {
-      const res = await notesApi.listComments(noteId);
-      await db.execute('DELETE FROM local_comment WHERE note_id = ?', [noteId]);
-      for (const c of res.comments) {
-        await db.execute(
-          'INSERT INTO local_comment (id, note_id, author_id, body_ct, created_at) VALUES (?, ?, ?, ?, ?)',
-          [c.id, noteId, c.author_id, c.body_ct, c.created_at]
-        );
+    const pending = await db.select<{ count: number }[]>(
+      "SELECT COUNT(*) as count FROM write_queue WHERE note_id = ? AND kind IN ('comment', 'deleteComment')",
+      [noteId]
+    );
+    if (pending[0]?.count === 0) {
+      try {
+        const res = await notesApi.listComments(noteId);
+        await db.execute('DELETE FROM local_comment WHERE note_id = ?', [noteId]);
+        for (const c of res.comments) {
+          await db.execute(
+            'INSERT INTO local_comment (id, note_id, author_username, body_ct, created_at) VALUES (?, ?, ?, ?, ?)',
+            [c.id, noteId, c.author_username, c.body_ct, c.created_at]
+          );
+        }
+      } catch {
       }
-    } catch {
     }
 
     const cached = await db.select<LocalCommentRow[]>(
@@ -344,7 +363,7 @@ export function createSqliteStore(): Store {
     return Promise.all(
       cached.map(async c => ({
         id: c.id,
-        authorId: c.author_id,
+        authorUsername: c.author_username,
         body: await noteCrypto.openComment(entry.cek, c.id, c.body_ct),
         createdAt: c.created_at,
       }))
@@ -359,16 +378,17 @@ export function createSqliteStore(): Store {
     const now = Date.now();
 
     const db = await getDb();
-    await db.execute('INSERT INTO local_comment (id, note_id, author_id, body_ct, created_at) VALUES (?, ?, ?, ?, ?)', [
+    const username = requireSession().username;
+    await db.execute('INSERT INTO local_comment (id, note_id, author_username, body_ct, created_at) VALUES (?, ?, ?, ?, ?)', [
       id,
       noteId,
-      requireSession().userId,
+      username,
       bodyCt,
       now,
     ]);
     await enqueue({ kind: 'comment', noteId, commentId: id, body_ct: bodyCt });
 
-    return { id, authorId: requireSession().userId, body, createdAt: now };
+    return { id, authorUsername: username, body, createdAt: now };
   }
 
   async function deleteComment(noteId: string, commentId: string): Promise<void> {
@@ -419,6 +439,7 @@ export function createSqliteStore(): Store {
     purgeNote,
     shareNote,
     unshareNote,
+    listShares,
     publish,
     listComments,
     postComment,

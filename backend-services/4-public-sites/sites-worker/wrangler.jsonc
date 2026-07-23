@@ -1,0 +1,35 @@
+{
+	"name": "memoza-sites",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-11",
+	"workers_dev": false,
+	"observability": {
+		"enabled": true
+	},
+	"routes": [
+		{
+			"pattern": "memozasites.com",
+			"custom_domain": true
+		}
+	],
+	"assets": {
+		"directory": "../../../frontend/public-reader/dist"
+	},
+	"rules": [
+		{
+			"type": "Text",
+			"globs": ["**/*.html"],
+			"fallthrough": true
+		}
+	],
+	"services": [
+		{
+			"binding": "GATEWAY",
+			"service": "memoza-gateway"
+		}
+	],
+	"vars": {
+		"PARENT_ALLOWED_ORIGINS": "https://app.memoza.io",
+		"PUBLIC_CACHE_MAX_AGE_S": "60"
+	}
+}

@@ -40,7 +40,7 @@ export async function handleLogin(request: Request, env: AuthEnv): Promise<Respo
 
   if (user.active !== 1) return json({ error: 'Not activated' }, 403);
 
-  const { accessToken, refreshCookie } = await issueTokens(env, { id: user.id });
+  const { accessToken, refreshCookie } = await issueTokens(env, { id: user.id, username: user.username ?? '' });
 
   return new Response(
     JSON.stringify({

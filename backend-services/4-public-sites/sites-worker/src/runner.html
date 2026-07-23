@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>html,body{margin:0;padding:0;height:100%}#content{border:0;width:100%;height:100%;display:block;background:#fff}</style>
+</head>
+<body>
+<iframe id="content" title="Note content"></iframe>
+<script>
+(function () {
+  var ALLOWED = '__PARENT_ORIGINS__'.split(',');
+  var frame = document.getElementById('content');
+  frame.addEventListener('load', function () {
+    var doc = frame.contentDocument;
+    if (!doc || !doc.documentElement) return;
+    var last = -1;
+    var report = function () {
+      var value = doc.documentElement.scrollHeight;
+      if (value === last) return;
+      last = value;
+      window.parent.postMessage({ type: 'memoza-height', value: value }, '*');
+    };
+    new ResizeObserver(report).observe(doc.documentElement);
+    report();
+  });
+  window.addEventListener('message', function (e) {
+    if (e.source !== window.parent) return;
+    if (ALLOWED.indexOf(e.origin) === -1) return;
+    var d = e.data;
+    if (!d || d.type !== 'memoza-html' || typeof d.html !== 'string') return;
+    var html = d.html;
+    if (!/name=["']?viewport/i.test(html)) {
+      var meta = '<meta name="viewport" content="width=device-width, initial-scale=1">';
+      html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, function (m) { return m + meta; }) : meta + html;
+    }
+    frame.setAttribute('srcdoc', html);
+  });
+  window.parent.postMessage({ type: 'memoza-runner-ready' }, '*');
+})();
+</script>
+</body>
+</html>

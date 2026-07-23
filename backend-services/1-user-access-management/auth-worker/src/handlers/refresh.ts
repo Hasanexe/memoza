@@ -28,13 +28,14 @@ export async function handleRefresh(
     return json({ error: 'Unauthorized' }, 401);
   }
 
-  const user = await env.DB.prepare('SELECT id FROM users WHERE id = ?')
+  const user = await env.DB.prepare('SELECT id, username FROM users WHERE id = ?')
     .bind(row.user_id)
-    .first<{ id: string }>();
+    .first<{ id: string; username: string | null }>();
   if (!user) return json({ error: 'Unauthorized' }, 401);
 
   const accessToken = await signAccessToken(env.JWT_PRIVATE_KEY, {
     user_id: row.user_id,
+    username: user.username ?? '',
   });
 
   const newRawBytes = crypto.getRandomValues(new Uint8Array(32));

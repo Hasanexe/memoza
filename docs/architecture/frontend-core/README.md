@@ -21,7 +21,7 @@ params, envelope formats): `docs/architecture/README.md`. Client state:
 | `api/auth.ts`, `api/notes.ts` | typed functions mirroring `api-auth-usage.md` / `api-notes-usage.md` one-to-one; move ciphertext and wrapped-key strings only, no crypto here |
 | `store/types.ts` | the `Store` **contract** every view codes against (`sync`, `listNotes`, `getNote`, `saveNote`, trash/restore/purge, share/unshare, comments, `search`) — no persistence assumptions. `pinned` is gone; pin state lives in a note's `tags` |
 | `search.ts` | in-memory substring match over title only, given a plain list of `{id, title}` |
-| `views/*` | hash-routed screens (auth, list, editor, share dialog, settings, public reader) plus `dom.ts` (framework-free DOM builder, incl. `openDialog()`), `markdown.ts` (Markdown → sanitized HTML, lazy Mermaid), `app.ts` (router + the persistent shell, see below), `sidebar.ts` (chrome: brand/status row, a picker↔drill-in section state machine, settings, and the account row), `notePanel.ts` (the stateful note-list component, see below — instantiated twice per session, see "Persistent shell" below), `tagsEditor.ts` (the chip-style tag editor, including the control-tag typeahead), and `controlTags.ts` (the `CONTROL_KEYS`/`BOOLEAN_CONTROLS` registry — see "Notebook UI" below) |
+| `views/*` | hash-routed screens (auth, list, editor, share dialog, settings) plus `dom.ts` (framework-free DOM builder, incl. `openDialog()`), `markdown.ts` (Markdown → sanitized HTML, lazy Mermaid; `format:html` dispatches to `sandboxFrame.ts`), `sandboxFrame.ts` (sandboxed cross-origin iframe + postMessage feed for `format:html` content — see `docs/architecture/4-public-sites/README.md`), `app.ts` (router + the persistent shell, see below), `sidebar.ts` (chrome: brand/status row, a picker↔drill-in section state machine, settings, and the account row), `notePanel.ts` (the stateful note-list component, see below — instantiated twice per session, see "Persistent shell" below), `tagsEditor.ts` (the chip-style tag editor, including the control-tag typeahead), and `controlTags.ts` (the `CONTROL_KEYS`/`BOOLEAN_CONTROLS` registry — see "Notebook UI" below) |
 | `connection.ts` | Tracks `navigator.onLine`, whether a valid access token is held, last successful sync, and a pending-write count; a subscribe/notify module (`connectionStatus()`, `onConnectionChange()`) — see "Persistent shell" below |
 
 `frontend/web` supplies the in-memory `Store` implementation
@@ -114,7 +114,7 @@ BOOLEAN_CONTROLS = ['pin']
   `POST /notes/{id}/publish` (see `api-notes-usage.md`) with plaintext
   `{title, body, format}`.
 - Once published, the note's own `/note/<id>` screen gains a **"Public"
-  badge** + the shareable link (`app.memoza.io/<username>/<page_no>`,
+  badge** + the shareable link (`memozasites.com/<username>/<page_no>`,
   `.mmp` shortcut icon on desktop — see `frontend-desktop`). Every subsequent
   save of a published note **attaches the plaintext mirror fields**
   `{title, body, format}` alongside the ciphertext on `PUT` — the server
@@ -127,14 +127,13 @@ BOOLEAN_CONTROLS = ['pin']
   survives trash). The restore action for a note with `is_public` shows its
   own warning modal before proceeding: *"This page was published. Restoring
   it puts it back on its public link immediately."*
-- **The public reader is a distinct, unauthenticated view** at
-  `#/…` for the app's own preview and a plain route for anonymous visitors
-  (`app.memoza.io/<username>/<page_no>`, served without the sidebar or any
-  authenticated chrome) — modeled on a full-page artifact/reader screen:
-  title + rendered body (Markdown or, through the same DOMPurify path as the
-  editor, HTML) and nothing else. **No comments, no tags, no share button, no
-  edit affordance** — preview only, even for the owner viewing their own
-  public link while logged out.
+- **Anonymous reading happens off-app**: the canonical public URL is
+  `memozasites.com/<username>/<page_no>`, served as a standalone site by the
+  `memoza-sites` worker (`docs/architecture/4-public-sites/README.md`). The
+  former in-app public reader (`publicReaderView.ts` + the
+  `#/<username>/<page_no>` route and `getPublicPage` API helper) was removed
+  with the cutover; the Markdown public page reuses the core renderer via the
+  `frontend/public-reader` bundle instead.
 
 ### Registration & activation screens
 
@@ -362,12 +361,16 @@ password field.
 
 ## Known gaps (accepted for v1)
 
-- **No "list current participants" in the share dialog.** The notes API has
-  no endpoint that enumerates a note's grants/participants (by design — see
-  `docs/architecture/2-notes/README.md`), so the share dialog only supports
-  share-by-email and revoke-by-email (which resolves the email to a user id
-  via the same authenticated public-key lookup used for sharing). A future
-  participants-listing endpoint would need a matching backend change.
+- **Sharing is by username, and the share dialog lists current recipients.**
+  You share by **username** (resolved to a user id + public key via the
+  authenticated public-key lookup); `GET /notes/{id}` returns the owner's active
+  recipients as `shares`, which the dialog renders as a list with a per-row ✕ to
+  revoke. Comments are labelled with the commenter's username. Both usernames
+  travel trusted in the access token (`X-Username`) — see
+  `docs/architecture/2-notes/README.md`. A recipient viewing a *Shared with me*
+  note sees a "shared by @owner" line, from `owner_username` on the `GET
+  /notes/{id}` response (the owner's own grant username, backfilled when they
+  open the note).
 - **`kdf_iterations` is a compile-time constant on the client**
   (`config.ts`), not fetched per-user before login. The server currently
   whitelists registration to exactly one value, so this doesn't bite yet, but
@@ -383,6 +386,24 @@ password field.
 
 ## Changes
 
+- 2026-07-22 (Memoza Sites cutover) — `format:html` rendering moved from
+  sanitized-inline `innerHTML` to a **sandboxed cross-origin iframe**: new
+  `views/sandboxFrame.ts` builds an iframe (`sandbox="allow-scripts
+  allow-forms allow-modals"`, never `allow-same-origin`) pointed at a trusted
+  runner page (`https://memozasites.com/_runner` on web; a local `sandbox://`
+  scheme on desktop via `configureSandboxRunner()`), postMessages the
+  decrypted HTML in after the runner's ready handshake, and auto-sizes from
+  the runner's height reports (validating `event.source` against the frame).
+  The note's own scripts/styles now actually run, fully isolated from the app
+  origin (keys, session). `renderContent`'s html branch no longer sanitizes or
+  touches `innerHTML`. The in-app public reader was removed
+  (`publicReaderView.ts`, the `#/<username>/<page_no>` route, `getPublicPage`;
+  the `publicReader.pageNotFound` i18n key is now unused but left in the
+  locale files); the canonical public URL is
+  `memozasites.com/<username>/<page_no>` via the new `PUBLIC_SITE_ORIGIN`
+  config (`VITE_PUBLIC_SITE_ORIGIN`, replaces
+  `PUBLIC_APP_ORIGIN`/`VITE_PUBLIC_APP_ORIGIN`). See
+  `docs/architecture/4-public-sites/README.md`.
 - 2026-07-22 (render + share fixes) — Three defects in `crypto`/`views`.
   **(1) Sharing failed** with "Usages cannot be empty when creating a key."
   `unwrapCekWithDekExtractable` unwrapped the transient extractable CEK with an

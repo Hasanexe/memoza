@@ -24,6 +24,7 @@ one page as plaintext (see the crypto spec's "Public pages" below).
 | `1-user-access-management` | `memoza-auth`, `memoza-gateway` | Accounts, JWTs, refresh tokens, key envelopes (DEK + user keypair), password reset, account deletion, public-key lookup, permanent username handles; gateway verifies JWTs and routes to services (and composes the unauthenticated public-page read) |
 | `2-notes` | `memoza-notes` | Encrypted notes, per-note key grants, read-only sharing, comments, shared tags, delta sync, trash, permanent page numbers, opt-in public page publishing |
 | `3-subscriptions` | `memoza-billing` (planned) | Mobile in-app subscriptions (Apple/Google), server-verified with store notifications — see `docs/architecture/3-subscriptions/README.md` |
+| `4-public-sites` | `memoza-sites` | `memozasites.com` — neutral, cookie-free origin serving published pages as standalone sites and the sandboxed runner that makes `format:html` notes interactive in-app — see `docs/architecture/4-public-sites/README.md` |
 | `frontend/web` | app.memoza.io | Online-only UI, all cryptography, Markdown + Mermaid rendering, client-side search over title/tags |
 | `frontend/desktop` | Tauri shell | Implemented scaffold — reuses the web crypto/api/store core; adds an offline-first local store and OS-keystore unlock |
 
@@ -214,10 +215,13 @@ page is the one deliberate exception**, and it's opt-in and explicit per page:
   stay encrypted and unserved even on a published page. The public copy
   therefore always matches the current content until the page is deleted.
   There is no frozen-snapshot mode.
-- The public URL (`https://app.memoza.io/<username>/<page_no>`) resolves
-  through an **unauthenticated** route that spans two services — username →
+- The public URL (`https://memozasites.com/<username>/<page_no>`, served by
+  the `memoza-sites` worker as a standalone site) resolves through an
+  **unauthenticated** composition that spans two services — username →
   user id in `memoza-auth`, then page content in `memoza-notes` — composed by
-  the gateway. See the notes and auth service designs for the endpoints.
+  the gateway and consumed by `memoza-sites` over a service binding. See
+  `docs/architecture/4-public-sites/README.md` and the notes and auth service
+  designs for the endpoints.
 - **This is the one path where "not even admins can read your notes" is
   knowingly false** — for that specific page, once published. The UI must say
   so in plain language before the user confirms.
@@ -311,6 +315,7 @@ page is the one deliberate exception**, and it's opt-in and explicit per page:
 | Auth + gateway design | `docs/architecture/1-user-access-management/README.md` + `table.md` + `variables.md` |
 | Notes service design | `docs/architecture/2-notes/README.md` + `table.md` + `variables.md` |
 | Subscriptions design (planned) | `docs/architecture/3-subscriptions/README.md` + `table.md` + `variables.md` |
+| Public sites design (`memozasites.com`) | `docs/architecture/4-public-sites/README.md` + `variables.md` (no `table.md` — the service has no database) |
 | Cloudflare-dashboard hardening checklist | `CLOUDFLARE-HARDENING.txt` (repo root — panel-only items, not code) |
 | Shared frontend core design (`crypto`/`api`/`store`/`views`) | `docs/architecture/frontend-core/README.md` + `table.md` |
 | Web frontend design | `docs/architecture/frontend-web/README.md` + `table.md` + `variables.md` |

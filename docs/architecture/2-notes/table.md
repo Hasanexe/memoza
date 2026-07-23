@@ -50,6 +50,7 @@ read-only (no permission column — authorization is `note.owner_id == caller`).
 | `user_id` | TEXT NOT NULL | Participant; owner or share recipient |
 | `wrapped_cek` | TEXT NOT NULL | The note's CEK wrapped for this user; blanked to `''` on purge/revoke |
 | `wrap_method` | TEXT NOT NULL | `dek` (owner, symmetric) or `pubkey` (recipient, RSA-OAEP) |
+| `username` | TEXT | Participant's canonical username, denormalized (immutable, so never stale). For recipients: set from the share request. For the owner's own grant: backfilled from `X-Username` the next time the owner opens the note (`GET /notes/{id}`), so a recipient can be shown who shared it. Powers both the owner's recipient list and the "shared by" label without an auth-service lookup |
 | `last_viewed_at` | INTEGER NOT NULL DEFAULT 0 | Unix ms this user last opened the note (`GET /notes/{id}` sets it to now); set to the grant's creation time on create/share so pre-access comment activity never shows as unread. Compared against `note.last_comment_at` to compute `has_unread_comment` in the list feed |
 | `updated_at` | INTEGER NOT NULL | Unix ms, server-set; sync cursor |
 | `revoked_at` | INTEGER | Unix ms — set when the owner revokes this grant via unshare; the row survives (wrapped_cek blanked) until `TOMBSTONE_RETENTION_DAYS` so the keyset sync can still emit it under `revoked`, then the lazy sweep deletes it |
@@ -68,7 +69,7 @@ One participant's comment on a note; body encrypted with the note's CEK.
 |---|---|---|
 | `id` | TEXT PK | UUID, **client-generated** (idempotent `POST` replay) |
 | `note_id` | TEXT NOT NULL → note.id | |
-| `author_id` | TEXT NOT NULL | Set from the trusted header; any participant |
+| `author_username` | TEXT | Commenter's public username, set from the trusted `X-Username` header at post time; shown as-is. Also the delete-authorization key (author = matching username). Null on legacy comments predating the username migration |
 | `body_ct` | TEXT NOT NULL | base64(iv ‖ AES-256-GCM(cek)) of the comment text (AAD = comment `id`) |
 | `created_at` | INTEGER NOT NULL | Unix ms |
 

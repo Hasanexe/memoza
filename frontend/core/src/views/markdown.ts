@@ -1,21 +1,33 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { renderHtmlFrame } from './sandboxFrame';
 
 type MermaidModule = typeof import('mermaid');
 
 let mermaidModule: MermaidModule | null = null;
 
+function prefersDark(): boolean {
+  const attr = document.documentElement.getAttribute('data-theme');
+  if (attr) return attr === 'dark';
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+}
+
 async function ensureMermaid(): Promise<MermaidModule> {
-  if (!mermaidModule) {
-    mermaidModule = await import('mermaid');
-    mermaidModule.default.initialize({ startOnLoad: false, securityLevel: 'strict', htmlLabels: false, suppressErrorRendering: true });
-  }
+  if (!mermaidModule) mermaidModule = await import('mermaid');
+  mermaidModule.default.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    htmlLabels: false,
+    suppressErrorRendering: true,
+    theme: prefersDark() ? 'dark' : 'default',
+  });
   return mermaidModule;
 }
 
 export async function renderContent(host: HTMLElement, source: string, format: 'md' | 'html'): Promise<void> {
   if (format === 'html') {
-    host.innerHTML = DOMPurify.sanitize(source, { FORCE_BODY: true });
+    host.replaceChildren();
+    renderHtmlFrame(host, source);
     return;
   }
   await renderMarkdown(host, source);

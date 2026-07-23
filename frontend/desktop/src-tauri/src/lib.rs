@@ -1,6 +1,11 @@
 use keyring::Entry;
 use std::sync::Mutex;
 
+const RUNNER_HTML: &str =
+    include_str!("../../../../backend-services/4-public-sites/sites-worker/src/runner.html");
+const RUNNER_PARENT_ORIGINS: &str = "tauri://localhost,http://tauri.localhost,http://localhost:1420";
+const RUNNER_CSP: &str = "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; frame-ancestors tauri://localhost http://tauri.localhost http://localhost:1420";
+
 #[tauri::command]
 fn seal_secret(service: String, account: String, secret: String) -> Result<(), String> {
     let entry = Entry::new(&service, &account).map_err(|e| e.to_string())?;
@@ -57,6 +62,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .register_uri_scheme_protocol("sandbox", |_ctx, _request| {
+            let html = RUNNER_HTML.replace("__PARENT_ORIGINS__", RUNNER_PARENT_ORIGINS);
+            tauri::http::Response::builder()
+                .header("Content-Type", "text/html; charset=utf-8")
+                .header("Content-Security-Policy", RUNNER_CSP)
+                .body(html.into_bytes())
+                .unwrap()
+        })
         .manage(PendingMmpUrl(Mutex::new(extract_mmp_url_from_args())))
         .invoke_handler(tauri::generate_handler![
             seal_secret,

@@ -12,7 +12,10 @@ spec in `docs/architecture/README.md` — not restated here.
 | `memoza-auth` | `api.memoza.io/auth/*` | Registration, login, refresh, logout, password change, password reset, account deletion; owns D1 `memoza_auth`, the JWT **private** key, and every user's key envelope + public key |
 | `memoza-gateway` | `api.memoza.io/*` (everything else) | Verifies EdDSA access JWTs (against the current + optional previous **public** key, for zero-downtime rotation), answers `/health` and `/public/*` unauthenticated, strips inbound `Authorization`/`X-User-Id`/`X-User-Role`, attaches a trusted `X-User-Id`, forwards `/notes/*` to `memoza-notes` over a service binding; also serves the authenticated public-key lookup and composes the public-page read (`username` → `memoza-auth`, page content → `memoza-notes`) |
 
-Access tokens: EdDSA JWTs, 15 min, claim `user_id`. Refresh tokens: 32 random
+Access tokens: EdDSA JWTs, 15 min, claims `user_id` + `username`. The gateway
+verifies the token and forwards both as `X-User-Id` / `X-Username` to upstream
+services (stripping any client-supplied copies first), so downstream workers get
+a trusted, spoof-proof username without a lookup. Refresh tokens: 32 random
 bytes, rotated on every refresh,
 stored as SHA-256 hash only, delivered via
 `__Secure-refresh_token; HttpOnly; Secure; SameSite=Strict; Path=/auth`.
@@ -38,7 +41,7 @@ service.
 | `POST /auth/reset/request` | Email a reset token (proves mailbox ownership) | Implemented |
 | `POST /auth/reset/confirm` | Two-step: `{token,email}` → `{recovery_mode[, recovery_key]}`; full body → store new `authHash` + re-wrapped envelope, revoke all sessions | Implemented |
 | `DELETE /auth/account` | Delete user + tokens; fan out to `memoza-notes` to purge notes/grants/comments | Implemented |
-| `GET /internal/auth/public-key?email=` | Internal-only: recipient public-key lookup for sharing; reached via the gateway after JWT verification | Implemented |
+| `GET /internal/auth/public-key?username=` | Internal-only: recipient lookup for sharing (by username), reached via the gateway after JWT verification. Returns `user_id` + canonical `username` + `public_key` for **active** users; `404` otherwise | Implemented |
 | `GET /internal/auth/resolve-username?username=` | Internal-only: `username → user_id`, no auth check (the caller — the gateway's public-page route — is itself unauthenticated by design). Matches **active** users only; `404` otherwise | Implemented |
 
 ## Registration & activation (email-verified, enumeration-free)
@@ -118,7 +121,7 @@ public `routes` for any path.
 ## Username (public handle, separate from login)
 
 A permanent, unique, plaintext `username` on each user row — purely a public
-handle for notebook page links (`app.memoza.io/<username>/<page_no>`,
+handle for notebook page links (`memozasites.com/<username>/<page_no>`,
 `memoza://username/pageno`, `.mmp` shortcut files) and, optionally, a nicer
 share target than an email address. **It does not touch authentication.**
 
@@ -152,7 +155,7 @@ actually requires username to be the *login* identity:
 - **Never reused**: account deletion inserts the username into
   `retired_usernames` (see `table.md`) — otherwise a new user could register a
   deleted user's handle and every previously shared public link
-  (`app.memoza.io/<username>/<page_no>`, `.mmp` files, bookmarks) would
+  (`memozasites.com/<username>/<page_no>`, `.mmp` files, bookmarks) would
   silently resolve to the *new* person's pages: a content-takeover/phishing
   primitive. Register and the availability check both consult `users` **and**
   `retired_usernames`. The same table is pre-seeded with reserved
@@ -317,6 +320,11 @@ not a code change.
 
 ## Changes
 
+- 2026-07-23 — Access token now also carries a `username` claim; the gateway
+  forwards it as `X-Username` (stripping any client copy) so downstream services
+  get a trusted username with no lookup. The public-key lookup for sharing is now
+  keyed by **username** (not email) and echoes the canonical username. Enables
+  username-based sharing and username-labelled comments/recipient lists in notes.
 - 2026-07-07 — Module copied from a sibling project and adapted to Memoza;
   design doc created; E2EE key-envelope extension planned.
 - 2026-07-08 — Added user keypair (for note sharing), password-reset flow,

@@ -1,10 +1,9 @@
 import { h, clear, errorBanner, infoBanner, openDialog } from './dom';
 import type { AppContext } from './app';
-import type { DecryptedNote } from '../store/types';
-import * as authApi from '../api/auth';
+import type { DecryptedNote, NoteShare } from '../store/types';
 import { requireSession } from '../crypto/session';
 import { connectionStatus, onConnectionChange } from '../connection';
-import { PUBLIC_APP_ORIGIN } from '../config';
+import { PUBLIC_SITE_ORIGIN } from '../config';
 import { t } from '../i18n';
 
 export function confirmDialog(title: string, body: string, confirmLabel: string, onConfirm: () => void): void {
@@ -30,47 +29,68 @@ export function confirmRestorePublished(onConfirm: () => void): void {
 
 export function publicPageUrl(pageNo: number): string {
   const { username } = requireSession();
-  return `${PUBLIC_APP_ORIGIN}/${username}/${pageNo}`;
+  return `${PUBLIC_SITE_ORIGIN}/${username}/${pageNo}`;
 }
 
 export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublished: (pageNo: number) => void): void {
   const { store } = ctx;
 
-  const shareEmailInput = h('input', { type: 'email', placeholder: t('share.recipientEmail') }) as HTMLInputElement;
+  const shareUsernameInput = h('input', { type: 'text', placeholder: t('share.recipientUsername'), autocapitalize: 'none', autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
   const shareStatus = h('div', {});
   const shareBtn = h('button', { type: 'button', class: 'primary' }, t('common.share'));
   shareBtn.addEventListener('click', async () => {
     clear(shareStatus);
-    const email = shareEmailInput.value.trim();
-    if (!email) return;
+    const username = shareUsernameInput.value.trim().replace(/^@/, '');
+    if (!username) return;
+    shareBtn.disabled = true;
     try {
-      await store.shareNote(note.id, email);
-      shareStatus.append(infoBanner(t('share.sharedWith', { email })));
-      shareEmailInput.value = '';
+      await store.shareNote(note.id, username);
+      shareStatus.append(infoBanner(t('share.sharedWithUsername', { username })));
+      shareUsernameInput.value = '';
+      await loadShares();
     } catch (err) {
       shareStatus.append(errorBanner(err instanceof Error ? err.message : t('share.failedToShare')));
+    } finally {
+      shareBtn.disabled = connectionStatus().status === 'offline';
     }
   });
 
-  const unshareEmailInput = h('input', {
-    type: 'email',
-    placeholder: t('share.recipientEmailToRemove'),
-  }) as HTMLInputElement;
-  const unshareStatus = h('div', {});
-  const unshareBtn = h('button', { type: 'button', class: 'danger' }, t('share.revokeAccess'));
-  unshareBtn.addEventListener('click', async () => {
-    clear(unshareStatus);
-    const email = unshareEmailInput.value.trim();
-    if (!email) return;
+  const sharesList = h('div', { class: 'shares-list' });
+
+  function renderShareRow(share: NoteShare): HTMLElement {
+    const removeBtn = h(
+      'button',
+      { type: 'button', class: 'icon-btn ghost share-remove', 'aria-label': t('share.remove'), title: t('share.remove') },
+      '×'
+    ) as HTMLButtonElement;
+    removeBtn.disabled = connectionStatus().status === 'offline';
+    removeBtn.addEventListener('click', async () => {
+      removeBtn.disabled = true;
+      try {
+        await store.unshareNote(note.id, share.userId);
+        await loadShares();
+      } catch {
+        removeBtn.disabled = false;
+      }
+    });
+    return h('div', { class: 'share-row' }, h('span', { class: 'share-name' }, share.username ? `@${share.username}` : '—'), removeBtn);
+  }
+
+  async function loadShares(): Promise<void> {
+    clear(sharesList);
+    let shares: NoteShare[];
     try {
-      const recipient = await authApi.lookupPublicKey(email);
-      await store.unshareNote(note.id, recipient.user_id);
-      unshareStatus.append(infoBanner(t('share.revokedAccessFor', { email })));
-      unshareEmailInput.value = '';
-    } catch (err) {
-      unshareStatus.append(errorBanner(err instanceof Error ? err.message : t('share.failedToRevoke')));
+      shares = await store.listShares(note.id);
+    } catch {
+      sharesList.append(errorBanner(t('share.failedToLoadShares')));
+      return;
     }
-  });
+    if (shares.length === 0) {
+      sharesList.append(h('p', { class: 'empty' }, t('share.noRecipients')));
+      return;
+    }
+    for (const share of shares) sharesList.append(renderShareRow(share));
+  }
 
   const publishStatus = h('div', {});
   const publishSection = h('div', {});
@@ -113,16 +133,18 @@ export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublis
   function updateOfflineState(): void {
     const offline = connectionStatus().status === 'offline';
     shareBtn.disabled = offline;
-    unshareBtn.disabled = offline;
+    for (const btn of Array.from(sharesList.querySelectorAll('button'))) (btn as HTMLButtonElement).disabled = offline;
     const publishBtn = publishSection.querySelector('button');
     if (publishBtn) publishBtn.disabled = offline;
   }
+
+  void loadShares();
   updateOfflineState();
   const unsubscribe = onConnectionChange(updateOfflineState);
 
   openDialog(
     close => {
-      const closeBtn = h('button', { type: 'button', class: 'ghost' }, t('common.close'));
+      const closeBtn = h('button', { type: 'button', class: 'ghost dialog-close' }, t('common.close'));
       closeBtn.addEventListener('click', close);
 
       return h(
@@ -130,13 +152,12 @@ export function renderShareDialog(ctx: AppContext, note: DecryptedNote, onPublis
         { class: 'dialog' },
         h('h2', {}, t('share.shareNoteTitle')),
         h('p', {}, t('share.shareReadOnlyNotice')),
-        h('label', {}, t('share.shareWith'), shareEmailInput),
+        h('label', {}, t('share.shareWith'), shareUsernameInput),
         shareBtn,
         shareStatus,
         h('hr', {}),
-        h('label', {}, t('share.revokeAccess'), unshareEmailInput),
-        unshareBtn,
-        unshareStatus,
+        h('h3', { class: 'share-subhead' }, t('share.peopleWithAccess')),
+        sharesList,
         h('hr', {}),
         h('h2', {}, t('share.publicPage')),
         publishSection,

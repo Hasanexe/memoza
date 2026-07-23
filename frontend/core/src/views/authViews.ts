@@ -376,6 +376,12 @@ export function renderLogin(ctx: AppContext): void {
     errorHost,
     submitBtn
   );
+  form.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !submitBtn.disabled) {
+      e.preventDefault();
+      void submit();
+    }
+  });
 
   root.append(
     h(
@@ -419,6 +425,7 @@ export function renderLogin(ctx: AppContext): void {
   );
 
   async function submit(): Promise<void> {
+    if (submitBtn.disabled) return;
     clear(errorHost);
     submitBtn.disabled = true;
     try {

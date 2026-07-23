@@ -21,6 +21,10 @@ export function readUserId(request: Request): string | null {
   return request.headers.get('X-User-Id');
 }
 
+export function readUsername(request: Request): string {
+  return request.headers.get('X-Username') ?? '';
+}
+
 export function encodeCursor(updatedAt: number, id: string): string {
   return btoa(`${updatedAt}:${id}`);
 }

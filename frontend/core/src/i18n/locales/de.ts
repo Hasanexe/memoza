@@ -1,6 +1,14 @@
 import type { StringKey } from '../en';
 
 const de: Record<StringKey, string> = {
+  'editor.sharedByUsername': 'Shared by @{username} — read only. You can still comment.',
+  'editor.unknownAuthor': 'Unknown',
+  'share.recipientUsername': 'Recipient username',
+  'share.sharedWithUsername': 'Shared with @{username}',
+  'share.peopleWithAccess': 'People with access',
+  'share.noRecipients': 'Not shared with anyone yet.',
+  'share.remove': 'Remove',
+  'share.failedToLoadShares': 'Failed to load recipients',
   'common.cancel': 'Abbrechen',
   'common.close': 'Schließen',
   'common.loading': 'Wird geladen…',

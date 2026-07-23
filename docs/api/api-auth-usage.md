@@ -91,7 +91,7 @@ Request: `{ "token": "<from the email link>", "username": "ada" }`.
 characters, lowercase `a-z`, `0-9`, and `-` (no leading/trailing hyphen);
 lowercase it client-side before sending — comparisons are case-insensitive
 (`Ada` = `ada`). It's your public handle for page links
-(`app.memoza.io/<username>/<page_no>`) and shortcuts; it plays no role in
+(`memozasites.com/<username>/<page_no>`) and shortcuts; it plays no role in
 login or key derivation (that's still email — see
 `docs/architecture/1-user-access-management/README.md`'s "Username" section).
 
@@ -120,7 +120,7 @@ Request: `{ "email": "…", "password": "<authHash>" }`.
 
 `username` is the account's permanent public handle (set at activation); cache it in
 the client session alongside `email` — it's what builds a published page's
-shareable link (`app.memoza.io/<username>/<page_no>`, see `api-notes-usage.md`'s
+shareable link (`memozasites.com/<username>/<page_no>`, see `api-notes-usage.md`'s
 "Pages & public sharing"). `language` is the account's stored UI-language
 preference (see `PUT /auth/language` below) — apply it with `i18n.setLanguage()`
 after login so a second device converges on the same choice.
@@ -245,10 +245,12 @@ credential). `200` deletes the account and purges all the user's notes,
 grants, and comments. Clear the in-memory session afterward (and, on the
 desktop shell, wipe the local SQLite cache and OS-keystore entry).
 
-## `GET /users/public-key?email=<email>`
+## `GET /users/public-key?username=<username>`
 
-Authenticated (Bearer token, via the gateway). Used before sharing a note.
-`200` → `{ "user_id": "…", "public_key": "<base64 SPKI>" }`. `404` if no such
-Memoza user (this is the accepted membership-enumeration surface). Wrap the
-note's CEK to `public_key`, then call `POST /notes/{id}/share` (see
-`api-notes-usage.md`).
+Authenticated (Bearer token, via the gateway). Used before sharing a note —
+recipients are addressed by **username** (unique, immutable, and already public
+via page URLs), not email. `200` → `{ "user_id": "…", "username": "<canonical>",
+"public_key": "<base64 SPKI>" }`. Only matches an **active** user; `404`
+otherwise (this is the accepted membership-enumeration surface). Wrap the note's
+CEK to `public_key`, then call `POST /notes/{id}/share` with the returned
+`user_id` and `username` (see `api-notes-usage.md`).

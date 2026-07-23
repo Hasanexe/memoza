@@ -537,6 +537,8 @@ button.icon-btn.editor-lock { display:none; }
   padding:28px 30px; min-height:52vh; color:var(--ink); line-height:1.7;
 }
 .preview > :first-child { margin-top:0; }
+.preview:has(> .html-frame) { padding:0; overflow:hidden; }
+.html-frame { display:block; width:100%; border:0; min-height:70vh; background:#fff; }
 .preview h1, .preview h2, .preview h3 { font-family:var(--font-display); font-weight:400; line-height:1.2; letter-spacing:-0.01em; margin:1.4em 0 .5em; }
 .preview h1 { font-size:32px; } .preview h2 { font-size:26px; } .preview h3 { font-size:21px; }
 .preview h4, .preview h5, .preview h6 { font-family:var(--font-sans); font-weight:700; margin:1.3em 0 .5em; }
@@ -569,7 +571,7 @@ button.icon-btn.editor-lock { display:none; }
 .comment { background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); padding:14px 16px; }
 .comment p { margin:0 0 6px; }
 .comment-meta { font-family:var(--font-mono); font-size:11px; letter-spacing:var(--tracking-mono); color:var(--ink-muted); }
-.comment button { min-height:36px; padding:6px 12px; font-size:12px; margin-top:8px; }
+.comment button { display:block; min-height:36px; padding:6px 12px; font-size:12px; margin-top:12px; }
 
 /* ---------- Share dialog ---------- */
 .dialog-overlay { position:fixed; inset:0; background:rgba(30,28,24,.5); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; z-index:50; padding:20px; animation:mz-fade var(--dur-quick) var(--ease); }
@@ -577,6 +579,12 @@ button.icon-btn.editor-lock { display:none; }
 .dialog h2 { font-family:var(--font-display); font-weight:400; font-size:26px; margin:0 0 6px; }
 .dialog > p { color:var(--ink-muted); font-size:14px; margin:0 0 18px; }
 .dialog hr { border:none; border-top:1px solid var(--line); margin:20px 0; }
+.dialog-close { display:block; margin-top:24px; }
+.share-subhead { font-family:var(--font-display); font-weight:400; font-size:18px; margin:0 0 10px; }
+.shares-list { display:flex; flex-direction:column; gap:6px; }
+.share-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 12px; background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); }
+.share-name { font-family:var(--font-mono); font-size:13px; }
+.share-remove { min-height:28px; min-width:28px; padding:0; font-size:18px; line-height:1; }
 
 /* ---------- Settings ---------- */
 .settings-view { animation:mz-fade var(--dur-quick) var(--ease); }

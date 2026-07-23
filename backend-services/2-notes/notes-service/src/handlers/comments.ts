@@ -5,7 +5,7 @@ import { validateUUID, validateCiphertext } from '../validation';
 interface CommentRow {
   id: string;
   note_id: string;
-  author_id: string;
+  author_username: string | null;
   body_ct: string;
   created_at: number;
 }
@@ -24,7 +24,7 @@ export async function handleListComments(env: NotesEnv, userId: string, noteId: 
   if (!(await hasGrant(env, userId, noteId))) return json({ error: 'Not found' }, 404);
 
   const rows = await env.DB.prepare(
-    'SELECT id, author_id, body_ct, created_at FROM note_comment WHERE note_id = ? ORDER BY created_at ASC'
+    'SELECT id, author_username, body_ct, created_at FROM note_comment WHERE note_id = ? ORDER BY created_at ASC'
   )
     .bind(noteId)
     .all<Omit<CommentRow, 'note_id'>>();
@@ -36,6 +36,7 @@ export async function handlePostComment(
   request: Request,
   env: NotesEnv,
   userId: string,
+  username: string,
   noteId: string
 ): Promise<Response> {
   if (!validateUUID(noteId)) return json({ error: 'Invalid note id' }, 400);
@@ -60,27 +61,27 @@ export async function handlePostComment(
   if (!(await hasGrant(env, userId, noteId))) return json({ error: 'Not found' }, 404);
 
   const existing = await env.DB.prepare(
-    'SELECT id, note_id, author_id, body_ct, created_at FROM note_comment WHERE id = ?'
+    'SELECT id, note_id, author_username, body_ct, created_at FROM note_comment WHERE id = ?'
   )
     .bind(id)
     .first<CommentRow>();
 
   if (existing) {
-    if (existing.note_id !== noteId || existing.author_id !== userId) {
+    if (existing.note_id !== noteId || existing.author_username !== username) {
       return json({ error: 'Comment id already in use' }, 409);
     }
     return json(
-      { id: existing.id, author_id: existing.author_id, body_ct: existing.body_ct, created_at: existing.created_at },
+      { id: existing.id, author_username: existing.author_username, body_ct: existing.body_ct, created_at: existing.created_at },
       201
     );
   }
 
   const now = Date.now();
   await env.DB.batch([
-    env.DB.prepare('INSERT INTO note_comment (id, note_id, author_id, body_ct, created_at) VALUES (?, ?, ?, ?, ?)').bind(
+    env.DB.prepare('INSERT INTO note_comment (id, note_id, author_username, body_ct, created_at) VALUES (?, ?, ?, ?, ?)').bind(
       id,
       noteId,
-      userId,
+      username,
       body_ct,
       now
     ),
@@ -91,20 +92,21 @@ export async function handlePostComment(
     env.DB.prepare('UPDATE note SET last_comment_at = ? WHERE id = ?').bind(now, noteId),
   ]);
 
-  return json({ id, author_id: userId, body_ct, created_at: now }, 201);
+  return json({ id, author_username: username, body_ct, created_at: now }, 201);
 }
 
 export async function handleDeleteComment(
   env: NotesEnv,
   userId: string,
+  username: string,
   noteId: string,
   commentId: string
 ): Promise<Response> {
   if (!validateUUID(noteId) || !validateUUID(commentId)) return json({ error: 'Invalid id' }, 400);
 
-  const comment = await env.DB.prepare('SELECT author_id FROM note_comment WHERE id = ? AND note_id = ?')
+  const comment = await env.DB.prepare('SELECT author_username FROM note_comment WHERE id = ? AND note_id = ?')
     .bind(commentId, noteId)
-    .first<{ author_id: string }>();
+    .first<{ author_username: string | null }>();
   if (!comment) return json({ error: 'Not found' }, 404);
 
   const note = await env.DB.prepare('SELECT owner_id FROM note WHERE id = ?')
@@ -112,7 +114,8 @@ export async function handleDeleteComment(
     .first<{ owner_id: string }>();
   if (!note) return json({ error: 'Not found' }, 404);
 
-  if (comment.author_id !== userId && note.owner_id !== userId) {
+  const isAuthor = comment.author_username !== null && comment.author_username === username;
+  if (!isAuthor && note.owner_id !== userId) {
     return json({ error: 'Forbidden' }, 403);
   }
 

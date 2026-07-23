@@ -243,8 +243,8 @@ feature that's native and platform-specific.
   dialogs) writes one into a folder the user picks.
 - **Not the same as a public link.** `.mmp`/`memoza://` shortcuts are private
   navigation aids gated by your own account's grants; the public
-  `app.memoza.io/<username>/<page_no>` URL (notes service design) is the
-  anonymous-facing mechanism and needs no app installed.
+  `memozasites.com/<username>/<page_no>` URL (`docs/architecture/4-public-sites/
+  README.md`) is the anonymous-facing mechanism and needs no app installed.
 
 ## Known gaps (accepted for v1)
 
@@ -261,6 +261,33 @@ feature that's native and platform-specific.
 
 ## Changes
 
+- 2026-07-23 (comment reactivity fixes) — `sqliteStore.ts`'s `getNote()` only
+  re-fetched from the server when the note had no local row at all, so once
+  `sync()` had pulled a note's `body_ct` down once, opening it again never hit
+  `GET /notes/{id}` again — the server-side "mark viewed" side effect that
+  clears `has_unread_comment` never fired, so the unread-comment badge stayed
+  lit forever. Fixed: `getNote()` now also re-fetches whenever the local row's
+  `has_unread_comment` is set, falling back to the stale local row if offline.
+  Separately, `listComments()` unconditionally replaced the local
+  `local_comment` table with the server's response right after `postComment`/
+  `deleteComment` enqueued their write (fire-and-forget via `drainQueue()`),
+  so the still-in-flight server list would clobber the optimistic local edit
+  until the note was closed and reopened. Fixed: `listComments()` now skips
+  the server-driven overwrite while a `comment`/`deleteComment` op for that
+  note is still sitting in `write_queue`.
+- 2026-07-22 (local sandbox runner) — `format:html` notes now render in the
+  core's sandboxed iframe (`frontend-core` Changes, same date) fed by a
+  **local** runner: `lib.rs` registers a `sandbox://` custom URI scheme
+  (`http://sandbox.localhost` on Windows) serving the shared runner HTML
+  (`include_str!` of `backend-services/4-public-sites/sites-worker/src/
+  runner.html`) with its own permissive CSP — a genuinely different origin
+  from the app webview, so the note's scripts run isolated from keys and
+  session, **fully offline** (no dependency on `memozasites.com`).
+  `main.ts` points the core at it via
+  `configureSandboxRunner(convertFileSrc('_runner', 'sandbox'))`;
+  `tauri.conf.json`'s CSP gained `frame-src sandbox: http://sandbox.localhost`.
+  `VITE_PUBLIC_APP_ORIGIN` → `VITE_PUBLIC_SITE_ORIGIN` (shareable links now
+  point at `memozasites.com`).
 - 2026-07-21 (mermaid + HTML-note styling) — Added `'unsafe-inline'` to the
   `style-src` directive in `src-tauri/tauri.conf.json`'s CSP, mirroring the web
   shell's `_headers` change. Mermaid's rendered SVG carries a `<style>` block and

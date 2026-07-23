@@ -35,7 +35,9 @@ function identityHeaders(request: Request, claims: AccessClaims): Headers {
   headers.delete('Authorization');
   headers.delete('X-User-Id');
   headers.delete('X-User-Role');
+  headers.delete('X-Username');
   headers.set('X-User-Id', claims.user_id);
+  headers.set('X-Username', claims.username);
   return headers;
 }
 

@@ -16,8 +16,15 @@ export interface NoteRow {
   deleted_at: number | null;
 }
 
+export interface NoteShare {
+  user_id: string;
+  username: string | null;
+}
+
 export interface FullNote extends NoteRow {
   body_ct: string;
+  owner_username?: string | null;
+  shares?: NoteShare[];
 }
 
 export interface ListResponse {
@@ -89,10 +96,10 @@ export function purgeNote(id: string): Promise<{ ok: true }> {
   return request(`/notes/${id}/purge`, { method: 'DELETE' });
 }
 
-export function shareNote(id: string, recipientId: string, wrappedCek: string): Promise<{ ok: true }> {
+export function shareNote(id: string, recipientId: string, wrappedCek: string, username: string): Promise<{ ok: true }> {
   return request(`/notes/${id}/share`, {
     method: 'POST',
-    body: JSON.stringify({ recipient_id: recipientId, wrapped_cek: wrappedCek }),
+    body: JSON.stringify({ recipient_id: recipientId, wrapped_cek: wrappedCek, username }),
   });
 }
 
@@ -110,19 +117,9 @@ export function publishNote(id: string, body: PublishNoteRequest): Promise<{ pag
   return request(`/notes/${id}/publish`, { method: 'POST', body: JSON.stringify(body) });
 }
 
-export interface PublicPage {
-  title: string;
-  body: string;
-  format: string;
-}
-
-export function getPublicPage(username: string, pageNo: number): Promise<PublicPage> {
-  return request(`/public/${encodeURIComponent(username)}/${pageNo}`, { method: 'GET' }, false);
-}
-
 export interface CommentRow {
   id: string;
-  author_id: string;
+  author_username: string | null;
   body_ct: string;
   created_at: number;
 }
